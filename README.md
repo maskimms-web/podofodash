@@ -1,20 +1,27 @@
-# Golf CAN Diagnostic v0.1
+# Golf CAN Diagnostic v0.2
 
-Пасивний діагностичний Android-додаток для Golf 5 та магнітоли D02022HA16 (Android 11, Raise CAN Pro V9.0.6). **Це експериментальна збірка: протокол Raise не підтверджено.** Додаток не надсилає CAN-команди та не змінює налаштування MCU.
+For Volkswagen Golf 5 / Android 11 D02022HA16 / Raise CAN Pro 9.0.6.
 
-## Збірка APK через GitHub (без Android Studio)
+## Changes
+- Scans installed CAN packages and their declared components (where visible to Android).
+- Listens for nine *hypothetical* broadcasts (not verified Raise message names).
+- Runs a temporary read-only HTTP server on port 8080 with a random 96-bit URL token.
+- Shows the LAN URL on screen; Safari can download `/report.txt`.
+- Server stops when the app closes or STOP is pressed. No CAN commands, no root, no external cloud.
 
-1. Створіть **новий порожній публічний або приватний репозиторій** на GitHub (не додавайте README під час створення).
-2. Розпакуйте цей архів та завантажте **вміст папки `GolfCanDiagnostic`** у корінь репозиторію, включно з прихованою папкою `.github` (у вебінтерфейсі GitHub: **Add file → Upload files**).
-3. Відкрийте **Actions → Build CAN Diagnostic APK → Run workflow**. Збірка також запускається після push у `main` або `master`.
-4. Дочекайтеся успішної збірки. У вікні запуску Actions в секції **Artifacts** завантажте `GolfCanDiagnostic-debug-apk`.
-5. Розпакуйте завантажений ZIP: усередині буде `app-debug.apk`. Скопіюйте APK на USB-флешку та встановіть на магнітолу.
-6. На стоянці відкрийте програму → **СКАНУВАТИ** → **СЛУХАТИ**, перевірте доступні події без руху автомобіля → **ЕКСПОРТ** → надішліть текст звіту.
+## GitHub build
+Upload the **contents** of this directory to the repository root. Keep `.github/workflows/build-apk.yml`. If your repo already has `.github/workflows/build.yml`, remove the old workflow or update it to avoid duplicate builds.
 
-## Обмеження
+GitHub → Actions → Build CAN Diagnostic APK → Run workflow. Download the artifact and extract `app-debug.apk`.
 
-- Застосунок лише шукає пакети з характерними назвами й слухає **гіпотетичні** Broadcast action. Порожній результат не означає відсутність CAN.
-- Пакетний пошук використовує `QUERY_ALL_PACKAGES` для локальної діагностики. Для розповсюдження через Google Play потрібна окрема перевірка політик.
-- Debug APK підписаний тестовим ключем GitHub runner; для регулярних релізів потрібне стабільне підписування.
-- `targetSdk=28` встановлено для сумісності з деякими старими інтерфейсами магнітол; це не варто використовувати як довгострокову конфігурацію.
-- **Не користуйтеся застосунком під час керування автомобілем.**
+## On the head unit
+1. Install the debug APK (same application ID as v0.1; normal update should work if signed with the same debug key; GitHub runners may use a different debug key, so uninstall v0.1 first if signature mismatch occurs).
+2. Park the vehicle. Press SCAN, then LISTEN. Try door/lights changes without driving.
+3. Connect head unit and iPhone to a network that permits local device-to-device traffic (e.g. same Wi-Fi; some iPhone hotspot configurations may isolate clients).
+4. Press Wi-Fi START. Enter the exact displayed URL including the long token into Safari. Download the TXT report and upload it to ChatGPT.
+5. Press STOP. Do not share the URL publicly.
+
+If Safari cannot connect, check that the phone and radio are on the same LAN and that client isolation is off. If the address does not appear, the head unit may not have a usable LAN IP. The report is transmitted over local **unencrypted HTTP**, so use a trusted private network only.
+
+## Important limitations
+Package components do not imply access to CAN data. Android's app sandbox may block private services, and no root or privileged permissions are requested. Broadcast names are unverified. This is a read-only diagnostic experiment; do not use it as a safety-critical instrument cluster.
