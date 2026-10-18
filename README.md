@@ -1,36 +1,25 @@
-# Golf CAN Diagnostic v0.2
+# Golf CAN Diagnostic v0.3
 
-For Volkswagen Golf 5 / Android 11 D02022HA16 / Raise CAN Pro 9.0.6.
+Read-only diagnostic application for the D02022HA16 / Raise CAN Pro head unit. Does not transmit CAN commands or access MCU device nodes.
 
-## Changes
-- Scans installed CAN packages and their declared components (where visible to Android).
-- Listens for nine *hypothetical* broadcasts (not verified Raise message names).
-- Runs a temporary read-only HTTP server on port 8080 with a random 96-bit URL token.
-- Shows the LAN URL on screen; Safari can download `/report.txt`.
-- Server stops when the app closes or STOP is pressed. No CAN commands, no root, no external cloud.
+## Build on GitHub
 
-## GitHub build
-Upload the **contents** of this directory to the repository root. Keep `.github/workflows/build-apk.yml`. If your repo already has `.github/workflows/build.yml`, remove the old workflow or update it to avoid duplicate builds.
+1. Create a new **public or private GitHub repository**.
+2. Upload **the contents of this ZIP** to the repository root (including `.github/workflows/build-apk.yml`).
+3. Open **Actions → Build CAN Diagnostic APK → Run workflow**, or push to `main`.
+4. Download artifact **GolfCanDiagnostic-debug-apk** and install `app-debug.apk` on the Android head unit.
 
-GitHub → Actions → Build CAN Diagnostic APK → Run workflow. Download the artifact and extract `app-debug.apk`.
+**Note:** if Android refuses to update the previous installation because the signing key differs, uninstall the older diagnostic app first (old diagnostic app data will be lost). Do not uninstall the factory CAN app.
 
-## On the head unit
-1. Install the debug APK (same application ID as v0.1; normal update should work if signed with the same debug key; GitHub runners may use a different debug key, so uninstall v0.1 first if signature mismatch occurs).
-2. Park the vehicle. Press SCAN, then LISTEN. Try door/lights changes without driving.
-3. Connect head unit and iPhone to a network that permits local device-to-device traffic (e.g. same Wi-Fi; some iPhone hotspot configurations may isolate clients).
-4. Press Wi-Fi START. Enter the exact displayed URL including the long token into Safari. Download the TXT report and upload it to ChatGPT.
-5. Press STOP. Do not share the URL publicly.
+## Test door events safely (vehicle stationary)
 
-If Safari cannot connect, check that the phone and radio are on the same LAN and that client isolation is off. If the address does not appear, the head unit may not have a usable LAN IP. The report is transmitted over local **unencrypted HTTP**, so use a trusted private network only.
+1. Connect the head unit to the iPhone hotspot.
+2. Open v0.3; tap **СКАНУВАТИ**, then **СЛУХАТИ**.
+3. Open driver door; tap **ДВЕРІ ВІДКРИТІ**. Close it; tap **ДВЕРІ ЗАКРИТІ**. Repeat 2–3 times.
+4. Tap **Wi-Fi СТАРТ**. Use the exact displayed `http://IP:PORT/TOKEN` address in iPhone Safari (HTTP, not HTTPS). Download TXT report. Stop server afterward.
 
-## Important limitations
-Package components do not imply access to CAN data. Android's app sandbox may block private services, and no root or privileged permissions are requested. Broadcast names are unverified. This is a read-only diagnostic experiment; do not use it as a safety-critical instrument cluster.
+The door buttons write **manual timestamps**, not detected CAN events. Only `BROADCAST action=...` entries demonstrate that a registered Android broadcast was received, and such a broadcast would still need validation against door changes.
 
+Wi-Fi server selects first free port 8080–8090 and uses a random access token. Do not share the URL publicly. Some iPhone hotspot configurations may prevent client-to-host connections; if so, transfer the TXT report via USB or other means. No QR code is included in this build.
 
-## v0.2.1 stability patch
-- Package scan runs on a background thread to avoid UI freezes.
-- Log UI refresh is throttled to four times per second.
-- Fatal scan exceptions are recorded in the report instead of terminating the app where possible.
-- Package scan avoids GET_DISABLED_COMPONENTS to reduce OEM PackageManager workload.
-- Wi-Fi server requires an actual local IP address; connect Wi-Fi first, then press STOP and Wi-Fi START.
-- No CAN bus writes or MCU commands.
+The factory overlay is evidence that the OEM system receives a door state; it does **not** establish third-party CAN API access. Package and process discovery are best-effort and may be limited by Android permissions. No services are started or bound.

@@ -3,6 +3,8 @@ package com.golf.candiagnostic
 import android.app.Activity
 import android.os.Bundle
 import android.os.Build
+import android.provider.Settings
+import android.app.ActivityManager
 import android.os.Handler
 import android.os.Looper
 import android.content.*
@@ -49,7 +51,7 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.rgb(10, 17, 28))
         }
         root.addView(TextView(this).apply {
-            text = "GOLF CAN DIAGNOSTIC v0.2.1"
+            text = "GOLF CAN DIAGNOSTIC v0.3"
             textSize = 21f; setTextColor(Color.rgb(60, 174, 255))
         })
         root.addView(TextView(this).apply {
@@ -67,6 +69,20 @@ class MainActivity : Activity() {
         button("Wi-Fi СТАРТ") { startWeb() }
         button("СТОП") { stopWeb() }
         root.addView(row)
+        val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        fun marker(label: String, message: String) {
+            row2.addView(Button(this).apply {
+                text = label; textSize = 11f
+                setOnClickListener { append("DOOR TEST MARKER: $message; elapsedMs=${android.os.SystemClock.elapsedRealtime()}") }
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+        }
+        marker("ДВЕРІ ВІДКРИТІ", "OPEN (manual mark, not CAN data)")
+        marker("ДВЕРІ ЗАКРИТІ", "CLOSED (manual mark, not CAN data)")
+        root.addView(row2)
+        root.addView(TextView(this).apply {
+            text = "Мітки дверей — вручну, НЕ автоматичне зчитування CAN. Натискай після кожної дії."
+            textSize = 12f; setTextColor(Color.LTGRAY)
+        })
         address = TextView(this).apply {
             textSize = 14f; setTextColor(Color.rgb(110, 220, 255))
             setTextIsSelectable(true)
@@ -113,6 +129,16 @@ class MainActivity : Activity() {
         append("--- SYSTEM ---")
         append("Manufacturer=${Build.MANUFACTURER}; model=${Build.MODEL}; device=${Build.DEVICE}")
         append("SDK=${Build.VERSION.SDK_INT}; display=${Build.DISPLAY}")
+        append("Overlay permission for THIS app=${Settings.canDrawOverlays(this)} (does not identify factory overlay)")
+        append("Process uid=${android.os.Process.myUid()}; pid=${android.os.Process.myPid()}")
+        try {
+            val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            val running = am.runningAppProcesses ?: emptyList()
+            append("Visible processes=${running.size}; CAN candidates:")
+            running.filter { p -> listOf("can", "mcu", "xygala", "car", "kyhero").any { p.processName.contains(it, ignoreCase = true) } }
+                .take(30).forEach { append("Process ${it.processName}; importance=${it.importance}") }
+        } catch (e: Exception) { append("Process scan unavailable: ${e.javaClass.simpleName}") }
+
         val names = listOf("com.xygala.canbus", "com.xygala.pvcanset", "com.kyhero.car.myhost")
         for (name in names) {
             try {
@@ -129,6 +155,8 @@ class MainActivity : Activity() {
                 append("Package $name not visible/installed")
             } catch (e: Exception) { append("Package $name: ${e.javaClass.simpleName}: ${e.message}") }
         }
+        append("--- FACTORY OVERLAY / CAN COMPONENT HINTS (not proof of access) ---")
+        append("Factory door popup is visible over other apps, but Android does not expose arbitrary overlay contents to third-party apps.")
         append("--- CAN/MCU PACKAGE CANDIDATES ---")
         try {
             @Suppress("DEPRECATION")
@@ -157,6 +185,7 @@ class MainActivity : Activity() {
             registerReceiver(r, filter)
             receiver = r
             append("Listening for ${actions.size} hypothetical broadcasts. No events does not mean CAN is absent.")
+            append("TEST: while parked, open/close door; tap manual marker each time; export report. Marker is NOT a received CAN event.")
         } catch (e: Exception) { append("Listener error: ${e.message}") }
     }
 
@@ -182,14 +211,20 @@ class MainActivity : Activity() {
         try {
             val bytes = ByteArray(12).also { SecureRandom().nextBytes(it) }
             token = bytes.joinToString("") { "%02x".format(it.toInt() and 255) }
-            val socket = ServerSocket(8080)
+            var chosen: ServerSocket? = null
+            for (candidate in 8080..8090) {
+                try { chosen = ServerSocket(candidate); break }
+                catch (_: java.net.BindException) { append("Port $candidate busy, trying next") }
+            }
+            val socket = chosen ?: throw java.net.BindException("No free port in 8080..8090")
+            val port = socket.localPort
             socket.soTimeout = 1000
             server = socket
             running.set(true)
             val addresses = ips()
             address.text = if (addresses.isEmpty()) "Немає локальної IP-адреси. Підключи Wi-Fi." else
-                "Safari (та сама мережа):\n" + addresses.joinToString("\n") { "http://$it:8080/$token" }
-            append("Wi-Fi report server started on port 8080. Only share the address with your iPhone.")
+                "Safari (та сама мережа):\n" + addresses.joinToString("\n") { "http://$it:$port/$token" }
+            append("Wi-Fi report server started on port $port. Only share the address with your iPhone.")
             serverThread = Thread {
                 while (running.get()) {
                     try {
@@ -208,6 +243,7 @@ class MainActivity : Activity() {
             s.soTimeout = 2500
             val reader = BufferedReader(InputStreamReader(s.getInputStream(), Charsets.US_ASCII))
             val request = reader.readLine() ?: return
+            if (request.length > 2048) return
             val parts = request.split(" ")
             val route = parts.getOrNull(1) ?: ""
             val method = parts.getOrNull(0) ?: ""
@@ -222,7 +258,7 @@ class MainActivity : Activity() {
                 body = synchronized(lock) { log.toString().toByteArray(Charsets.UTF_8) }
                 headers = "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Disposition: attachment; filename=GolfCanDiagnostic-report.txt\r\n"
             } else {
-                val html = """<!doctype html><html lang="uk"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Golf CAN Diagnostic</title><body style="font:18px sans-serif;background:#0a111c;color:white;padding:20px"><h2>Golf CAN Diagnostic v0.2</h2><p>Локальний діагностичний звіт</p><p><a style="color:#59caff" href="/$token/report.txt">Завантажити TXT-звіт</a></p><p>Після завантаження натисни СТОП на магнітолі.</p></body></html>"""
+                val html = """<!doctype html><html lang="uk"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Golf CAN Diagnostic</title><body style="font:18px sans-serif;background:#0a111c;color:white;padding:20px"><h2>Golf CAN Diagnostic v0.3</h2><p>Локальний діагностичний звіт</p><p><a style="color:#59caff" href="/$token/report.txt">Завантажити TXT-звіт</a></p><p>Після завантаження натисни СТОП на магнітолі.</p></body></html>"""
                 body = html.toByteArray(Charsets.UTF_8)
                 headers = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n"
             }
