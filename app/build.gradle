@@ -1,0 +1,6 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.golf.candiagnostic'
+    compileSdk 35
+    defaultConfig { applicationId 'com.golf.candiagnostic'; minSdk 23; targetSdk 27; versionCode 4; versionName '0.4' }
+}
