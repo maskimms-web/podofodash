@@ -3,6 +3,8 @@ package com.golf.candiagnostic
 import android.app.Activity
 import android.os.Bundle
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.content.*
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -25,6 +27,9 @@ class MainActivity : Activity() {
     private lateinit var address: TextView
     private val log = StringBuilder()
     private val lock = Any()
+    private val uiHandler = Handler(Looper.getMainLooper())
+    private val updatePending = AtomicBoolean(false)
+    private val scanning = AtomicBoolean(false)
     private var receiver: BroadcastReceiver? = null
     private var server: ServerSocket? = null
     private var serverThread: Thread? = null
@@ -44,7 +49,7 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.rgb(10, 17, 28))
         }
         root.addView(TextView(this).apply {
-            text = "GOLF CAN DIAGNOSTIC v0.2"
+            text = "GOLF CAN DIAGNOSTIC v0.2.1"
             textSize = 21f; setTextColor(Color.rgb(60, 174, 255))
         })
         root.addView(TextView(this).apply {
@@ -83,10 +88,28 @@ class MainActivity : Activity() {
             log.append("[").append(time).append("] ").append(message).append('\n')
             if (log.length > 200_000) log.delete(0, log.length - 150_000)
         }
-        runOnUiThread { output.text = synchronized(lock) { log.toString().takeLast(28_000) } }
+        if (updatePending.compareAndSet(false, true)) {
+            uiHandler.postDelayed({
+                if (!isFinishing && !isDestroyed) {
+                    output.text = synchronized(lock) { log.toString().takeLast(18_000) }
+                }
+                updatePending.set(false)
+            }, 250)
+        }
     }
 
     private fun scan() {
+        if (!scanning.compareAndSet(false, true)) { append("Scan already running"); return }
+        Thread {
+            try { performScan() }
+            catch (t: Throwable) {
+                append("SCAN FAILED: ${t.javaClass.name}: ${t.message}")
+                append(t.stackTrace.take(8).joinToString("\n"))
+            } finally { scanning.set(false); append("Scan finished") }
+        }.start()
+    }
+
+    private fun performScan() {
         append("--- SYSTEM ---")
         append("Manufacturer=${Build.MANUFACTURER}; model=${Build.MODEL}; device=${Build.DEVICE}")
         append("SDK=${Build.VERSION.SDK_INT}; display=${Build.DISPLAY}")
@@ -96,8 +119,7 @@ class MainActivity : Activity() {
                 @Suppress("DEPRECATION")
                 val p = packageManager.getPackageInfo(name,
                     PackageManager.GET_ACTIVITIES or PackageManager.GET_SERVICES or
-                    PackageManager.GET_RECEIVERS or PackageManager.GET_PROVIDERS or
-                    PackageManager.GET_DISABLED_COMPONENTS)
+                    PackageManager.GET_RECEIVERS or PackageManager.GET_PROVIDERS)
                 append("--- PACKAGE $name v${p.versionName} ---")
                 p.activities?.forEach { append("Activity ${it.name}; exported=${it.exported}") }
                 p.services?.forEach { append("Service ${it.name}; exported=${it.exported}; permission=${it.permission ?: "none"}") }
@@ -117,7 +139,7 @@ class MainActivity : Activity() {
             }
             matches.forEach { append("${it.packageName} | ${it.versionName}") }
             append("Visible packages=${pkgs.size}; candidates=${matches.size}")
-        } catch (e: Exception) { append("Package scan: ${e.message}") }
+        } catch (e: Throwable) { append("Package scan: ${e.javaClass.simpleName}: ${e.message}") }
     }
 
     private fun startListening() {

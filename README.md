@@ -25,3 +25,12 @@ If Safari cannot connect, check that the phone and radio are on the same LAN and
 
 ## Important limitations
 Package components do not imply access to CAN data. Android's app sandbox may block private services, and no root or privileged permissions are requested. Broadcast names are unverified. This is a read-only diagnostic experiment; do not use it as a safety-critical instrument cluster.
+
+
+## v0.2.1 stability patch
+- Package scan runs on a background thread to avoid UI freezes.
+- Log UI refresh is throttled to four times per second.
+- Fatal scan exceptions are recorded in the report instead of terminating the app where possible.
+- Package scan avoids GET_DISABLED_COMPONENTS to reduce OEM PackageManager workload.
+- Wi-Fi server requires an actual local IP address; connect Wi-Fi first, then press STOP and Wi-Fi START.
+- No CAN bus writes or MCU commands.
