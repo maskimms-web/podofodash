@@ -16,6 +16,10 @@ import android.provider.DocumentsContract;
 import android.content.SharedPreferences;
 import android.content.Context;
 import android.content.BroadcastReceiver;
+import android.os.IBinder;
+import android.content.pm.ServiceInfo;
+import android.content.pm.ResolveInfo;
+import java.lang.reflect.Method;
 import android.content.IntentFilter;
 import java.io.*;
 import java.net.*;
@@ -37,8 +41,10 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle b) {
         super.onCreate(b);
         LinearLayout root = new LinearLayout(this); root.setOrientation(1); root.setPadding(18,14,18,12); root.setBackgroundColor(Color.rgb(14,21,30));
-        TextView title = new TextView(this); title.setText("GOLF CAN DIAGNOSTIC v0.6"); title.setTextColor(Color.WHITE); title.setTextSize(22); root.addView(title);
+        TextView title = new TextView(this); title.setText("GOLF CAN DIAGNOSTIC v0.8"); title.setTextColor(Color.WHITE); title.setTextSize(22); root.addView(title);
         TextView sub = new TextView(this); sub.setText("Без root • тільки читання APK • Android SDK " + Build.VERSION.SDK_INT); sub.setTextColor(Color.LTGRAY); root.addView(sub);
+        addButton(root,"ОДНА ПОВНА ПЕРЕВІРКА (БЕЗПЕЧНА)",new View.OnClickListener(){public void onClick(View v){new Thread(new Runnable(){public void run(){runAll();}}).start();}});
+        addButton(root,"ПЕРЕВІРИТИ BINDER І СЕРВІСИ",new View.OnClickListener(){public void onClick(View v){new Thread(new Runnable(){public void run(){inspectBinder();}}).start();}});
         addButton(root,"СЛУХАТИ CAN ПОДІЇ",new View.OnClickListener(){public void onClick(View v){startListening();}});
         addButton(root,"ЗУПИНИТИ СЛУХАННЯ",new View.OnClickListener(){public void onClick(View v){stopListening();}});
         addButton(root,"ПОЗНАЧКА: ДВЕРІ ВІДКРИТО",new View.OnClickListener(){public void onClick(View v){log("РУЧНА ПОЗНАЧКА: двері відкрито (НЕ CAN-подія)");}});
@@ -49,10 +55,118 @@ public class MainActivity extends Activity {
         addButton(root,"2. ЗБЕРЕГТИ ЗВІТ І APK НА USB",new View.OnClickListener(){public void onClick(View v){new Thread(new Runnable(){public void run(){saveToUsb();}}).start();}});
         logView = new TextView(this); logView.setTextColor(Color.rgb(196,236,208)); logView.setTextSize(13); logView.setPadding(6,8,6,8); logView.setMovementMethod(new ScrollingMovementMethod());
         ScrollView sc = new ScrollView(this); sc.addView(logView); root.addView(sc,new LinearLayout.LayoutParams(-1,0,1)); setContentView(root);
-        report = new File(getExternalFilesDir(null),"GolfCanDiagnostic-v0.6-report.txt");
+        report = new File(getExternalFilesDir(null),"GolfCanDiagnostic-v0.8-report.txt");
         String saved=getPreferences(0).getString("usb_tree",null); if(saved!=null){usbTree=Uri.parse(saved);}
-        log("Старт. Копіювання APK тільки для читання. Ніяких CAN-команд.");
+        log("Старт v0.8. Повна безпечна перевірка CAN-інтерфейсів; ніяких CAN-команд.");
         log("Папка копій: " + getExternalFilesDir(null));
+    }
+    private void runAll(){
+        log("========== ПОВНА ДІАГНОСТИКА v0.8 ==========");
+        log("Тільки читання. Немає root, bindService, transact, відкриття UART, CAN-передачі чи зміни налаштувань.");
+        log("DEVICE="+Build.MANUFACTURER+" / "+Build.MODEL+" / "+Build.DISPLAY+" SDK="+Build.VERSION.SDK_INT);
+        inspectBinder();
+        inspectPackages();
+        inspectKernel();
+        inspectSerialMetadata();
+        log("========== КІНЕЦЬ. ВИБЕРИ USB ТА ЗБЕРЕЖИ ЗВІТ ==========");
+    }
+    private void inspectPackages(){
+        log("=== ПАКЕТИ, PERMISSIONS, PROVIDERS ===");
+        PackageManager pm=getPackageManager();
+        for(String pkg:packages){
+            try{
+                PackageInfo pi=pm.getPackageInfo(pkg,PackageManager.GET_PERMISSIONS|PackageManager.GET_PROVIDERS|PackageManager.GET_RECEIVERS|PackageManager.GET_SERVICES);
+                log("PKG "+pkg+" version="+pi.versionName+" uid="+pi.applicationInfo.uid+" flags="+pi.applicationInfo.flags);
+                if(pi.requestedPermissions!=null)for(String perm:pi.requestedPermissions){
+                    int grant=pm.checkPermission(perm,getPackageName());
+                    if(perm.toLowerCase(Locale.US).contains("can")||perm.toLowerCase(Locale.US).contains("mcu")||perm.toLowerCase(Locale.US).contains("car")||perm.toLowerCase(Locale.US).contains("system"))
+                        log("PERM "+perm+" grantedToDiagnostic="+(grant==PackageManager.PERMISSION_GRANTED));
+                }
+                if(pi.providers!=null)for(android.content.pm.ProviderInfo x:pi.providers)log("PROVIDER "+x.name+" authority="+x.authority+" exported="+x.exported+" readPermission="+x.readPermission);
+                if(pi.receivers!=null)for(android.content.pm.ActivityInfo x:pi.receivers)log("RECEIVER "+x.name+" exported="+x.exported+" permission="+x.permission);
+            }catch(Throwable e){log("PACKAGE_META "+pkg+" error="+describe(e));}
+        }
+        log("MY_UID="+android.os.Process.myUid());
+        try{Class<?> c=Class.forName("android.os.ICanbusService");log("AIDL_CLASS ICanbusService PRESENT methods="+c.getDeclaredMethods().length);for(Method m:c.getDeclaredMethods())log("AIDL_METHOD "+m.toGenericString());}catch(Throwable e){log("AIDL_CLASS ICanbusService unavailable="+describe(e));}
+        try{Class<?> c=Class.forName("android.os.ICanbusInterface");log("AIDL_CLASS ICanbusInterface PRESENT methods="+c.getDeclaredMethods().length);for(Method m:c.getDeclaredMethods())log("AIDL_METHOD "+m.toGenericString());}catch(Throwable e){log("AIDL_CLASS ICanbusInterface unavailable="+describe(e));}
+    }
+    private void inspectKernel(){
+        log("=== SOCKETCAN / PROC / SYS (READ ONLY) ===");
+        String[] paths={"/proc/net/dev","/proc/net/can/rcvlist_all","/proc/net/can/stats","/proc/net/can/version","/proc/net/can/rcvlist_fil","/proc/tty/drivers"};
+        for(String path:paths)readTextLimited(path,35);
+        File net=new File("/sys/class/net");
+        File[] items=net.listFiles();
+        if(items==null){log("SYS_NET list unavailable");return;}
+        for(File f:items){String n=f.getName();if(n.startsWith("can")||n.startsWith("vcan")||n.contains("slcan")){
+            log("SOCKETCAN_IF "+n);readTextLimited(f.getAbsolutePath()+"/type",2);readTextLimited(f.getAbsolutePath()+"/operstate",2);
+        }}
+        log("SOCKETCAN_IF scan complete (absence of interface does not exclude UART CANBOX)");
+    }
+    private void inspectSerialMetadata(){
+        log("=== UART / DEVICE NODES (METADATA ONLY; NO OPEN) ===");
+        String[] dirs={"/dev","/dev/serial","/dev/pts"};
+        for(String dir:dirs){File d=new File(dir);File[] files=d.listFiles();if(files==null){log("DEV_DIR "+dir+" not readable");continue;}
+            int hits=0;for(File f:files){String n=f.getName().toLowerCase(Locale.US);
+                if(n.startsWith("tty")||n.contains("uart")||n.contains("can")||n.contains("mcu")||n.contains("serial")){
+                    if(++hits<=45)log("DEV_NODE "+f.getAbsolutePath()+" readable="+f.canRead()+" writable="+f.canWrite());
+                }
+            }log("DEV_DIR "+dir+" matched="+hits+" (display limited to 45)");
+        }
+    }
+    private void readTextLimited(String path,int limit){
+        File f=new File(path);log("FILE "+path+" exists="+f.exists()+" readable="+f.canRead());
+        if(!f.isFile()||!f.canRead())return;
+        try(BufferedReader br=new BufferedReader(new FileReader(f))){String line;int n=0;while((line=br.readLine())!=null&&n++<limit){log("  "+(line.length()>220?line.substring(0,220):line));}}
+        catch(Throwable e){log("FILE_ERROR "+path+" "+describe(e));}
+    }
+    private void inspectBinder(){
+        log("=== v0.8: ТІЛЬКИ ЧИТАННЯ МЕТАДАНИХ СИСТЕМНИХ СЕРВІСІВ ===");
+        log("SDK="+Build.VERSION.SDK_INT+"; ніяких CAN команд, bindService чи transact");
+        try {
+            Class<?> sm=Class.forName("android.os.ServiceManager");
+            Method list=sm.getDeclaredMethod("listServices");
+            String[] names=(String[])list.invoke(null);
+            log("ServiceManager.listServices: "+(names==null?"null":names.length));
+            if(names!=null){
+                Method get=sm.getDeclaredMethod("getService",String.class);
+                int candidates=0;
+                for(String name:names){
+                    String low=name.toLowerCase(Locale.US);
+                    if(!(low.contains("can")||low.contains("mcu")||low.contains("uart")||low.contains("vehicle")||low.contains("car")||low.contains("pvc")))continue;
+                    candidates++;
+                    try{
+                        Object o=get.invoke(null,name);
+                        if(o instanceof IBinder){
+                            IBinder b=(IBinder)o;
+                            String descriptor;
+                            try{descriptor=b.getInterfaceDescriptor();}catch(Throwable e){descriptor="ERROR:"+e.getClass().getSimpleName()+":"+e.getMessage();}
+                            log("BINDER name="+name+" descriptor="+descriptor+" alive="+b.isBinderAlive());
+                        }else log("BINDER name="+name+" object="+(o==null?"null":o.getClass().getName()));
+                    }catch(Throwable e){log("BINDER "+name+" error="+describe(e));}
+                }
+                log("Знайдено сервісів із CAN/MCU/CAR у назві: "+candidates);
+                if(candidates==0)log("Імена можуть бути іншими. Повний список не читаємо як CAN-повідомлення.");
+            }
+        }catch(Throwable e){log("ServiceManager недоступний: "+describe(e));}
+        PackageManager pm=getPackageManager();
+        for(String pkg:packages){
+            try{
+                PackageInfo info=pm.getPackageInfo(pkg,PackageManager.GET_SERVICES|PackageManager.GET_PERMISSIONS);
+                log("PACKAGE "+pkg+" version="+info.versionName);
+                if(info.requestedPermissions!=null)for(String perm:info.requestedPermissions){
+                    if(perm.toLowerCase(Locale.US).contains("can")||perm.toLowerCase(Locale.US).contains("mcu")||perm.toLowerCase(Locale.US).contains("system")||perm.toLowerCase(Locale.US).contains("signature"))log("REQUESTED_PERMISSION "+perm);
+                }
+                if(info.services!=null)for(ServiceInfo si:info.services){
+                    log("SERVICE "+si.name+" exported="+si.exported+" permission="+si.permission+" process="+si.processName);
+                }
+            }catch(Throwable e){log("PACKAGE "+pkg+" error="+describe(e));}
+        }
+        log("=== КІНЕЦЬ BINDER ДІАГНОСТИКИ. НІЧОГО НЕ ВИКЛИКАНО У CAN-СЕРВІСАХ ===");
+    }
+    private String describe(Throwable e){
+        Throwable t=e;
+        if(e instanceof java.lang.reflect.InvocationTargetException && ((java.lang.reflect.InvocationTargetException)e).getTargetException()!=null)t=((java.lang.reflect.InvocationTargetException)e).getTargetException();
+        return t.getClass().getName()+": "+t.getMessage();
     }
     private void startListening(){
         if(receiver!=null){log("Прослуховування вже працює");return;}
