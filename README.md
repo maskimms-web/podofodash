@@ -1,18 +1,16 @@
-# Golf CAN Analyzer v1.4 — VW Golf 5 / Raise-PQ / 8227L
+# Golf R CAN Dashboard v1.5 — 8227L / Raise-PQ / Golf 5
 
-Android SDK 27 target, min SDK 23; GitHub Actions builds `app-debug.apk` (Actions → Artifacts).
+**First visual integration**, based on working v1.4 CAN Analyzer, with a custom 1024×510 Canvas dashboard below a 43px control bar (overall 1024×600 nominal). The image reference is a visual direction; the dashboard is drawn in Java (no fake readings, no bitmap overlay).
 
-## Live features
-- CANBOX Binder callback, explicit confirmation, 90-second auto-stop, no CAN transmission.
-- Validated `0x24` door-state response **only when testing the driver's door**. Other doors not decoded.
-- Community Raise-PQ **candidate** telemetry decoder: `2E 41 0D 02 ... CHECKSUM`.
-- Dashboard shows candidate RPM, speed, voltage, mileage and raw fuel byte. Diagnostics shows candidate external temperature. Values are **NOT VERIFIED** against vehicle; do not use for driving decisions.
-- No coolant-temperature mapping. Fuel raw byte is **not a percentage**. Ignition is not validated.
-- Command catalog: per-command counts, changes, latest hex; diagnostics retains full raw log, markers, USB export.
-- When no fresh telemetry frame in 12 seconds, display dashes; no invented values.
-
-## Safe testing
-Park the car, secure parking brake, start CAN 90s, compare with vehicle instrument cluster. Test engine off, idle, 1500/2000 RPM with stationary car; avoid interacting with the screen while driving. Stop callback after the test; reboot head unit if the stock CAN app behaves differently.
+- Circular RPM/speed dials, vector Golf silhouette, driver-door tested status, telemetry tiles, bottom clickable diagnostic navigation.
+- **Candidate only:** 0x41/02 RPM, speed, voltage, outside temperature, mileage, fuel raw byte. No fuel percentage, no coolant temperature, no invented readings.
+- 0x24 door response observed with driver door only. Other doors **not** separately identified. 12s stale-data timeout.
+- Binder callback opt-in, 90-second automatic stop, unregister, no CAN TX. Do not use while driving.
+- Toolbar: start 90s, stop, diagnostic screen. Dashboard bottom bar: diagnostic screen, command catalog, 0x41 hex, caveats.
+- Diagnostic screen retains logs, phase markers, USB folder selection and export.
 
 ## Build
-GitHub → Actions → `Build Golf CAN Analyzer v1.4` → Run workflow → download APK artifact.
+Push ZIP contents to a GitHub repository → Actions → Build → download APK artifact. Android minSdk 23, targetSdk 27, Java 17 / Gradle 8.7.
+
+## Testing
+Park the vehicle and secure the parking brake. Start 90s and compare RPM, voltage, odometer with stock gauges; send exported report for verification. No on-road interaction with the UI.

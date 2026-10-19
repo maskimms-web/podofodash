@@ -104,7 +104,7 @@ public class MainActivity extends Activity {
         // Diagnostic view is accessible with the toolbar button; the dashboard is the default.
         final LinearLayout oldRoot=diagnosticPanel;
 
-        TextView title = new TextView(this); title.setText("GOLF CAN v1.4  |  RAISE-PQ ANALYZER"); title.setTextColor(Color.WHITE); title.setTextSize(18); oldRoot.addView(title);
+        TextView title = new TextView(this); title.setText("GOLF R CAN v1.5  |  RAISE-PQ ANALYZER"); title.setTextColor(Color.WHITE); title.setTextSize(18); oldRoot.addView(title);
         TextView sub = new TextView(this); sub.setText("8227L • SDK " + Build.VERSION.SDK_INT + " • 90 с автостоп • без CAN TX"); sub.setTextColor(Color.LTGRAY); sub.setTextSize(12); oldRoot.addView(sub);
         LinearLayout indicators=new LinearLayout(this);indicators.setOrientation(LinearLayout.HORIZONTAL);
         oldRoot.addView(indicators,new LinearLayout.LayoutParams(-1,104));
@@ -135,51 +135,83 @@ public class MainActivity extends Activity {
         addSmallButton(line3,"ПІДСУМОК",new View.OnClickListener(){public void onClick(View v){showSummary();}});
         logView = new TextView(this); logView.setTextColor(Color.rgb(196,236,208)); logView.setTextSize(11); logView.setPadding(8,6,8,6);
         ScrollView sc = new ScrollView(this); sc.setFillViewport(false); sc.addView(logView); oldRoot.addView(sc,new LinearLayout.LayoutParams(-1,320)); setContentView(root);
-        report = new File(getExternalFilesDir(null),"GolfCanAnalyzer-v1.4-report.txt");
+        report = new File(getExternalFilesDir(null),"GolfR-CAN-v1.5-report.txt");
         String saved=getPreferences(0).getString("usb_tree",null); if(saved!=null){usbTree=Uri.parse(saved);}
         mainHandler.post(refreshSignals);
-        log("Старт v1.4. Raise-PQ decoder candidates. Немає CAN TX; callback тільки за підтвердженням.");
+        log("Старт v1.5. Raise-PQ decoder candidates. Немає CAN TX; callback тільки за підтвердженням.");
         log("Папка копій: " + getExternalFilesDir(null));
     }
 
-    // Visual dashboard: 0x41/0x02 measurements are UNVERIFIED candidates; no simulated values.
+    // v1.5 UI: custom Canvas, scaled to 1024x510 below the toolbar.
+    // All telemetry values originate from live 0x41/02 candidate decoding; no sample values.
     private final class DashboardView extends View {
-        private final Paint paint=new Paint(3);
+        private final Paint p=new Paint(3);
+        private final int bg=Color.rgb(3,9,19),blue=Color.rgb(20,118,249),bright=Color.rgb(46,164,255);
+        private final int white=Color.rgb(238,246,255),muted=Color.rgb(136,167,200),red=Color.rgb(251,61,79),green=Color.rgb(36,211,129);
         DashboardView(Context c){super(c);setLayerType(View.LAYER_TYPE_SOFTWARE,null);}
-        private void color(int c){paint.setColor(c);paint.setStyle(Paint.Style.FILL);paint.setStrokeWidth(2);}
-        private void txt(Canvas c,String t,float x,float y,int size,int col,boolean bold){color(col);paint.setTextSize(size);paint.setTypeface(bold?android.graphics.Typeface.create("sans-serif",1):android.graphics.Typeface.create("sans-serif",0));paint.setTextAlign(Paint.Align.CENTER);c.drawText(t,x,y,paint);}
-        private void stroke(Canvas c,float x1,float y1,float x2,float y2,int col,float w){color(col);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(w);c.drawLine(x1,y1,x2,y2,paint);paint.setStyle(Paint.Style.FILL);}
-        private void arc(Canvas c,RectF r,float from,float sweep,int col,float width){color(col);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(width);paint.setStrokeCap(Paint.Cap.ROUND);c.drawArc(r,from,sweep,false,paint);paint.setStyle(Paint.Style.FILL);}
-        @Override protected void onDraw(Canvas actual){super.onDraw(actual);float sx=getWidth()/1024f,sy=getHeight()/510f;actual.save();actual.scale(sx,sy);
-            Canvas c=actual; c.drawColor(Color.rgb(7,12,22));
-            int blue=Color.rgb(30,160,255),white=Color.rgb(231,239,251),dim=Color.rgb(100,120,147),red=Color.rgb(247,58,70),green=Color.rgb(42,211,131);
-            txt(c,"R",512,52,46,blue,true);txt(c,"GOLF  •  DIGITAL COCKPIT",512,80,16,dim,false);
-            stroke(c,48,93,976,93,Color.rgb(32,55,79),2);
-            arc(c,new RectF(65,128,393,456),125,290,Color.rgb(30,49,70),19);arc(c,new RectF(65,128,393,456),125,0.1f,blue,19);
-            arc(c,new RectF(631,128,959,456),125,290,Color.rgb(30,49,70),19);arc(c,new RectF(631,128,959,456),125,0.1f,blue,19);
-            boolean fresh=telemetryFresh();
-            txt(c,fresh?String.valueOf(speedCandidate):"—",229,301,96,white,true);txt(c,"km/h",229,347,23,dim,false);
-            txt(c,"ШВИДКІСТЬ • КАНДИДАТ 0x41/02",229,484,14,dim,false);
-            txt(c,fresh?String.valueOf(rpmCandidate):"—",795,301,96,white,true);txt(c,"rpm",795,347,23,dim,false);
-            txt(c,"ОБЕРТИ • КАНДИДАТ 0x41/02",795,484,14,dim,false);
-            color(Color.rgb(16,27,43));c.drawRoundRect(new RectF(407,124,617,450),20,20,paint);
-            // Stylized top-down hatchback, drawn with vector geometry.
-            color(Color.rgb(44,62,83));c.drawRoundRect(new RectF(461,160,563,412),34,34,paint);
-            color(Color.rgb(88,111,134));c.drawRoundRect(new RectF(471,171,553,400),27,27,paint);
-            color(Color.rgb(15,30,49));c.drawRoundRect(new RectF(478,223,546,322),14,14,paint);
-            color(Color.rgb(23,44,65));c.drawRoundRect(new RectF(479,178,545,216),14,14,paint);
-            color(Color.rgb(23,44,65));c.drawRoundRect(new RectF(479,333,545,392),14,14,paint);
-            color(Color.rgb(8,13,22));c.drawRoundRect(new RectF(448,204,465,254),5,5,paint);c.drawRoundRect(new RectF(559,204,576,254),5,5,paint);
-            c.drawRoundRect(new RectF(448,335,465,384),5,5,paint);c.drawRoundRect(new RectF(559,335,576,384),5,5,paint);
-            long now=android.os.SystemClock.elapsedRealtime();boolean live=callbackActive&&registerSucceeded&&door24At>0&&now-door24At<SIGNAL_TTL_MS;
-            int state=live?door24:-1;int status=state==1?red:state==0?green:dim;
-            // Only the DRIVER DOOR was tested. No individual-door decoding claimed.
-            stroke(c,456,259,456,323,status,8);
-            txt(c,state==1?"ДВЕРІ: ВІДКРИТО":state==0?"ДВЕРІ: ЗАКРИТО":"ДВЕРІ: НЕВІДОМО",512,437,15,status,true);
-            txt(c,callbackActive?"CAN: ПРИЙОМ АКТИВНИЙ":"CAN: ПРИЙОМ ЗУПИНЕНО",512,110,14,callbackActive?green:dim,false);
-            txt(c,"ПАЛИВО: "+(fresh?fuelRaw+" raw":"—")+"    НАПРУГА: "+(fresh?String.format(Locale.US,"%.2f",voltageCentivolts/100.0)+" V":"—")+"    ПРОБІГ: "+(fresh?mileageCandidate+" ?":"—"),512,468,15,white,false);
-            txt(c,"НЕПЕРЕВІРЕНІ ПОЛЯ 0x41/02  •  ТЕСТ ЛИШЕ ВОДІЙСЬКИХ ДВЕРЕЙ  •  CAN TX: НІ",512,503,12,dim,false);
-            actual.restore();
+        private void fill(int color){p.setColor(color);p.setStyle(Paint.Style.FILL);p.setStrokeWidth(1);p.setShader(null);}
+        private void text(Canvas c,String s,float x,float y,float size,int color,boolean bold){fill(color);p.setTypeface(android.graphics.Typeface.create("sans-serif",bold?1:0));p.setTextSize(size);p.setTextAlign(Paint.Align.CENTER);c.drawText(s,x,y,p);}
+        private void left(Canvas c,String s,float x,float y,float size,int color,boolean bold){fill(color);p.setTypeface(android.graphics.Typeface.create("sans-serif",bold?1:0));p.setTextSize(size);p.setTextAlign(Paint.Align.LEFT);c.drawText(s,x,y,p);}
+        private void rect(Canvas c,float x,float y,float w,float h,int color,float r){fill(color);c.drawRoundRect(new RectF(x,y,x+w,y+h),r,r,p);}
+        private void line(Canvas c,float x,float y,float xx,float yy,int color,float width){fill(color);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(width);c.drawLine(x,y,xx,yy,p);p.setStyle(Paint.Style.FILL);}
+        private void ring(Canvas c,float x,float y,float radius,float start,float sweep,int color,float width){fill(color);p.setStyle(Paint.Style.STROKE);p.setStrokeCap(Paint.Cap.ROUND);p.setStrokeWidth(width);c.drawArc(new RectF(x-radius,y-radius,x+radius,y+radius),start,sweep,false,p);p.setStyle(Paint.Style.FILL);}
+        private void dial(Canvas c,float x,float y,boolean rpm,boolean fresh){
+            int max=rpm?8:260;float value=fresh?(rpm?rpmCandidate/1000f:speedCandidate):0f;
+            ring(c,x,y,137,133,274,Color.rgb(15,40,75),12);ring(c,x,y,137,133,274,blue,5);
+            if(fresh)ring(c,x,y,137,133,Math.max(0,Math.min(274,value/max*274)),bright,9);
+            for(int i=0;i<=12;i++){double angle=Math.toRadians(133+i*274.0/12);float cs=(float)Math.cos(angle),sn=(float)Math.sin(angle);line(c,x+cs*112,y+sn*112,x+cs*(i%3==0?127:121),y+sn*(i%3==0?127:121),i%3==0?white:muted,i%3==0?3:1);}
+            for(int i=0;i<=4;i++){double angle=Math.toRadians(133+i*274.0/4);float cs=(float)Math.cos(angle),sn=(float)Math.sin(angle);text(c,String.valueOf(rpm?i*2:i*65),x+cs*91,y+sn*91+6,19,white,true);}
+            text(c,rpm?"ОБЕРТИ":"ШВИДКІСТЬ",x,y-32,14,muted,false);
+            text(c,fresh?String.valueOf(rpm?rpmCandidate:speedCandidate):"—",x,y+19,61,white,true);
+            text(c,rpm?"об/хв":"км/год",x,y+48,15,muted,false);
+            text(c,"0x41 / 0x02  •  КАНДИДАТ",x,y+100,10,muted,false);
+        }
+        private void tile(Canvas c,float x,float y,float w,String label,String value,String unit,int accent){
+            rect(c,x,y,w,68,Color.rgb(10,23,43),10);fill(Color.rgb(24,68,113));p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1);c.drawRoundRect(new RectF(x,y,x+w,y+68),10,10,p);p.setStyle(Paint.Style.FILL);
+            rect(c,x+10,y+13,3,40,accent,2);left(c,label,x+22,y+23,13,muted,true);left(c,value+(unit.length()>0?" "+unit:""),x+22,y+52,23,white,true);
+        }
+        @Override protected void onDraw(Canvas real){super.onDraw(real);real.save();real.scale(getWidth()/1024f,getHeight()/510f);Canvas c=real;c.drawColor(bg);
+            rect(c,0,0,1024,46,Color.rgb(6,18,36),0);line(c,0,46,1024,46,blue,2);
+            text(c,"GOLF",466,34,31,white,true);text(c,"R",553,35,39,bright,true);
+            left(c,"CAN  •  RAISE-PQ",20,30,16,muted,true);
+            text(c,callbackActive&&registerSucceeded?"● CAN ОНЛАЙН":"○ CAN ВИМКНЕНО",867,30,15,callbackActive&&registerSucceeded?green:muted,true);
+            boolean fresh=telemetryFresh();dial(c,172,197,true,fresh);dial(c,853,197,false,fresh);
+            rect(c,337,63,349,272,Color.rgb(8,23,44),18);
+            // Vector top-down Golf silhouette; driver-side accent represents observed 0x24 state only.
+            rect(c,456,91,110,221,Color.rgb(28,49,73),30);
+            rect(c,465,100,92,203,Color.rgb(93,123,153),26);
+            rect(c,472,112,78,43,Color.rgb(16,37,63),15);
+            rect(c,472,164,78,85,Color.rgb(10,27,47),15);
+            rect(c,472,259,78,34,Color.rgb(16,37,63),12);
+            rect(c,448,143,13,47,Color.rgb(4,9,17),4);rect(c,561,143,13,47,Color.rgb(4,9,17),4);
+            rect(c,448,231,13,45,Color.rgb(4,9,17),4);rect(c,561,231,13,45,Color.rgb(4,9,17),4);
+            long now=android.os.SystemClock.elapsedRealtime();boolean doorFresh=callbackActive&&registerSucceeded&&door24At>0&&now-door24At<SIGNAL_TTL_MS;
+            int state=doorFresh?door24:-1;int doorColor=state==1?red:state==0?green:muted;
+            if(state==1){line(c,463,165,427,193,red,9);line(c,427,193,423,246,red,8);}else{line(c,464,165,464,236,doorColor,7);}
+            text(c,state==1?"ДВЕРІ ВІДКРИТО":state==0?"ДВЕРІ ЗАКРИТО":"ДВЕРІ: НЕВІДОМО",512,329,17,doorColor,true);
+            text(c,"Перевірено лише водійські двері",512,351,12,muted,false);
+            String fuel=fresh?fuelRaw+" raw":"—";
+            String volts=fresh?String.format(Locale.US,"%.2f",voltageCentivolts/100.0):"—";
+            String odo=fresh?String.valueOf(mileageCandidate):"—";
+            String temp=fresh?String.format(Locale.US,"%.1f",outsideTempTenths/10.0):"—";
+            tile(c,18,368,239,"ПАЛИВО  •  RAW",fuel,"",bright);
+            tile(c,268,368,239,"ЗОВНІШНЯ ТЕМП.  •  ?",temp,fresh?"°C":"",bright);
+            tile(c,518,368,239,"НАПРУГА  •  ?",volts,fresh?"В":"",bright);
+            tile(c,768,368,238,"ПРОБІГ  •  ?",odo,fresh?"км":"",bright);
+            rect(c,18,447,988,47,Color.rgb(9,28,53),10);
+            text(c,"ДІАГНОСТИКА CAN",150,476,17,white,true);
+            text(c,"СИРИЙ ПОТІК / КАТАЛОГ",404,476,16,white,true);
+            text(c,"0x41 / 0x02 HEX",680,476,16,white,true);
+            text(c,"НЕПІДТВЕРДЖЕНІ ДАНІ",892,476,12,muted,true);
+            real.restore();
+        }
+        @Override public boolean onTouchEvent(android.view.MotionEvent e){
+            if(e.getAction()!=android.view.MotionEvent.ACTION_UP)return true;
+            float x=e.getX()*1024f/getWidth(),y=e.getY()*510f/getHeight();
+            if(y>440){if(x<270){diagnosticsVisible=true;diagnosticScroll.setVisibility(View.VISIBLE);dashboard.setVisibility(View.GONE);}
+                else if(x<560){showCommandCatalog();}else if(x<780){showTelemetryHex();}
+                else{new AlertDialog.Builder(MainActivity.this).setTitle("Статус даних").setMessage("0x41/02: RPM, швидкість, напруга, зовнішня температура, пробіг і паливо — кандидати. Паливо у RAW, не %. Температура ОЖ невідома. 0x24 перевірено лише при відкриванні водійських дверей. Значення не використовувати для керування автомобілем.").setPositiveButton("OK",null).show();}}
+            return true;
         }
     }
     private TextView indicator(LinearLayout row,String initial,int background){
