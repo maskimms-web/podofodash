@@ -7,6 +7,10 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.RectF;
 import android.view.View;
 import android.widget.*;
 import android.text.method.ScrollingMovementMethod;
@@ -33,10 +37,25 @@ import java.text.SimpleDateFormat;
 
 public class MainActivity extends Activity {
     private TextView logView;
+    private DashboardView dashboard;
+    private LinearLayout diagnosticPanel;
+    private ScrollView diagnosticScroll;
+    private boolean diagnosticsVisible=false;
     private TextView doorView, ignitionView, evidenceView;
     private volatile int door41=-1, door24=-1, ignition41=-1, ignition24=-1;
     private volatile long door41At=0, door24At=0, ignition41At=0, ignition24At=0;
     private volatile String shownDoor="", shownIgnition="";
+    // Raise-PQ 0x41/0x02: candidate telemetry mapping, never presented as verified.
+    private volatile int rpmCandidate=-1, speedCandidate=-1, voltageCentivolts=-1;
+    private volatile int outsideTempTenths=Integer.MIN_VALUE, fuelRaw=-1, mileageCandidate=-1;
+    private volatile long telemetryAt=0;
+    private volatile String telemetryHex="";
+    private volatile int telemetryFrames=0;
+    private static final long TELEMETRY_TTL_MS=12000L;
+    private TextView telemetryView;
+    private final Map<String,Integer> commandCounts=new TreeMap<String,Integer>();
+    private final Map<String,String> lastCommandHex=new TreeMap<String,String>();
+    private final Map<String,Integer> changedCounts=new TreeMap<String,Integer>();
     private static final long SIGNAL_TTL_MS=12000L;
     private final Object signalLock=new Object();
     private final java.io.ByteArrayOutputStream rxStream=new java.io.ByteArrayOutputStream();
@@ -73,37 +92,95 @@ public class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle b) {
         super.onCreate(b);
-        LinearLayout root = new LinearLayout(this); root.setOrientation(1); root.setPadding(10,7,10,7); root.setBackgroundColor(Color.rgb(14,21,30));
-        TextView title = new TextView(this); title.setText("GOLF CAN v1.2.3  |  LIVE DOOR TEST"); title.setTextColor(Color.WHITE); title.setTextSize(18); root.addView(title);
-        TextView sub = new TextView(this); sub.setText("8227L • SDK " + Build.VERSION.SDK_INT + " • 90 с автостоп • без CAN TX"); sub.setTextColor(Color.LTGRAY); sub.setTextSize(12); root.addView(sub);
+        LinearLayout root = new LinearLayout(this); root.setOrientation(1); root.setBackgroundColor(Color.rgb(7,12,22));
+        LinearLayout toolbar=new LinearLayout(this);toolbar.setOrientation(LinearLayout.HORIZONTAL);toolbar.setPadding(8,2,8,2);
+        root.addView(toolbar,new LinearLayout.LayoutParams(-1,43));
+        addSmallButton(toolbar,"▶ CAN 90 с",new View.OnClickListener(){public void onClick(View v){confirmCallback();}});
+        addSmallButton(toolbar,"■ СТОП",new View.OnClickListener(){public void onClick(View v){stopCallback();}});
+        addSmallButton(toolbar,"ДІАГНОСТИКА",new View.OnClickListener(){public void onClick(View v){diagnosticsVisible=!diagnosticsVisible;diagnosticScroll.setVisibility(diagnosticsVisible?View.VISIBLE:View.GONE);dashboard.setVisibility(diagnosticsVisible?View.GONE:View.VISIBLE);}});
+        dashboard=new DashboardView(this);root.addView(dashboard,new LinearLayout.LayoutParams(-1,0,1));
+        ScrollView diagScroll=new ScrollView(this);diagnosticScroll=diagScroll;diagScroll.setVisibility(View.GONE);diagnosticPanel=new LinearLayout(this);diagnosticPanel.setOrientation(1);diagnosticPanel.setPadding(10,7,10,7);diagnosticPanel.setBackgroundColor(Color.rgb(14,21,30));diagScroll.addView(diagnosticPanel);
+        root.addView(diagScroll,new LinearLayout.LayoutParams(-1,0,1));
+        // Diagnostic view is accessible with the toolbar button; the dashboard is the default.
+        final LinearLayout oldRoot=diagnosticPanel;
+
+        TextView title = new TextView(this); title.setText("GOLF CAN v1.4  |  RAISE-PQ ANALYZER"); title.setTextColor(Color.WHITE); title.setTextSize(18); oldRoot.addView(title);
+        TextView sub = new TextView(this); sub.setText("8227L • SDK " + Build.VERSION.SDK_INT + " • 90 с автостоп • без CAN TX"); sub.setTextColor(Color.LTGRAY); sub.setTextSize(12); oldRoot.addView(sub);
         LinearLayout indicators=new LinearLayout(this);indicators.setOrientation(LinearLayout.HORIZONTAL);
-        root.addView(indicators,new LinearLayout.LayoutParams(-1,104));
+        oldRoot.addView(indicators,new LinearLayout.LayoutParams(-1,104));
         doorView=indicator(indicators,"ДВЕРІ\nНЕВІДОМО",Color.rgb(65,75,88));
         ignitionView=indicator(indicators,"ЗАПАЛЮВАННЯ\nНЕВІДОМО",Color.rgb(65,75,88));
-        evidenceView=new TextView(this);evidenceView.setText("Експеримент: 41 + 24 мають підтвердити стан дверей. Жодних CAN TX.");
-        evidenceView.setTextColor(Color.LTGRAY);evidenceView.setTextSize(11);root.addView(evidenceView);
-        LinearLayout line1 = buttonRow(root);
+        evidenceView=new TextView(this);evidenceView.setText("Двері: основний сигнал 0x24. 0x41 лише діагностика. Без CAN TX.");
+        evidenceView.setTextColor(Color.LTGRAY);evidenceView.setTextSize(11);oldRoot.addView(evidenceView);
+        telemetryView=new TextView(this);telemetryView.setTextColor(Color.rgb(146,207,255));telemetryView.setTextSize(15);telemetryView.setPadding(10,10,10,10);oldRoot.addView(telemetryView);
+        LinearLayout telemetryButtons=buttonRow(oldRoot);
+        addSmallButton(telemetryButtons,"КАТАЛОГ CMD",new View.OnClickListener(){public void onClick(View v){showCommandCatalog();}});
+        addSmallButton(telemetryButtons,"0x41 HEX",new View.OnClickListener(){public void onClick(View v){showTelemetryHex();}});
+        addSmallButton(telemetryButtons,"ПОЗНАЧКА: 1500 RPM",new View.OnClickListener(){public void onClick(View v){mark("RPM 1500 (зі штатного тахометра)");}});
+        addSmallButton(telemetryButtons,"ПОЗНАЧКА: 2000 RPM",new View.OnClickListener(){public void onClick(View v){mark("RPM 2000 (зі штатного тахометра)");}});
+        LinearLayout line1 = buttonRow(oldRoot);
         addSmallButton(line1,"▶ ПРИЙОМ 90 с",new View.OnClickListener(){public void onClick(View v){confirmCallback();}});
         addSmallButton(line1,"■ СТОП",new View.OnClickListener(){public void onClick(View v){stopCallback();}});
         addSmallButton(line1,"USB ПАПКА",new View.OnClickListener(){public void onClick(View v){chooseUsb();}});
         addSmallButton(line1,"USB ЗВІТ",new View.OnClickListener(){public void onClick(View v){new Thread(new Runnable(){public void run(){saveToUsb();}}).start();}});
-        LinearLayout line2 = buttonRow(root);
+        LinearLayout line2 = buttonRow(oldRoot);
         addSmallButton(line2,"ДВЕРІ ВІДКР.",new View.OnClickListener(){public void onClick(View v){mark("ДВЕРІ ВІДКРИТІ");}});
         addSmallButton(line2,"ДВЕРІ ЗАКР.",new View.OnClickListener(){public void onClick(View v){mark("ДВЕРІ ЗАКРИТІ");}});
         addSmallButton(line2,"ЗАПАЛ. ON",new View.OnClickListener(){public void onClick(View v){mark("ЗАПАЛЮВАННЯ ON");}});
         addSmallButton(line2,"ЗАПАЛ. OFF",new View.OnClickListener(){public void onClick(View v){mark("ЗАПАЛЮВАННЯ OFF");}});
-        LinearLayout line3 = buttonRow(root);
+        LinearLayout line3 = buttonRow(oldRoot);
         addSmallButton(line3,"МАРКЕР: ХОЛОСТІ",new View.OnClickListener(){public void onClick(View v){mark("ДВИГУН ХОЛОСТІ");}});
         addSmallButton(line3,"МАРКЕР: ГАЗ",new View.OnClickListener(){public void onClick(View v){mark("ОБЕРТИ ПІДВИЩЕНО");}});
         addSmallButton(line3,"ДІАГНОСТИКА",new View.OnClickListener(){public void onClick(View v){new Thread(new Runnable(){public void run(){runAll();}}).start();}});
         addSmallButton(line3,"ПІДСУМОК",new View.OnClickListener(){public void onClick(View v){showSummary();}});
         logView = new TextView(this); logView.setTextColor(Color.rgb(196,236,208)); logView.setTextSize(11); logView.setPadding(8,6,8,6);
-        ScrollView sc = new ScrollView(this); sc.setFillViewport(false); sc.addView(logView); root.addView(sc,new LinearLayout.LayoutParams(-1,0,1)); setContentView(root);
-        report = new File(getExternalFilesDir(null),"GolfCanDoorMonitor-v1.2.2-report.txt");
+        ScrollView sc = new ScrollView(this); sc.setFillViewport(false); sc.addView(logView); oldRoot.addView(sc,new LinearLayout.LayoutParams(-1,320)); setContentView(root);
+        report = new File(getExternalFilesDir(null),"GolfCanAnalyzer-v1.4-report.txt");
         String saved=getPreferences(0).getString("usb_tree",null); if(saved!=null){usbTree=Uri.parse(saved);}
         mainHandler.post(refreshSignals);
-        log("Старт v1.2.3. Live Door Test. Немає CAN TX; callback тільки за підтвердженням.");
+        log("Старт v1.4. Raise-PQ decoder candidates. Немає CAN TX; callback тільки за підтвердженням.");
         log("Папка копій: " + getExternalFilesDir(null));
+    }
+
+    // Visual dashboard: 0x41/0x02 measurements are UNVERIFIED candidates; no simulated values.
+    private final class DashboardView extends View {
+        private final Paint paint=new Paint(3);
+        DashboardView(Context c){super(c);setLayerType(View.LAYER_TYPE_SOFTWARE,null);}
+        private void color(int c){paint.setColor(c);paint.setStyle(Paint.Style.FILL);paint.setStrokeWidth(2);}
+        private void txt(Canvas c,String t,float x,float y,int size,int col,boolean bold){color(col);paint.setTextSize(size);paint.setTypeface(bold?android.graphics.Typeface.create("sans-serif",1):android.graphics.Typeface.create("sans-serif",0));paint.setTextAlign(Paint.Align.CENTER);c.drawText(t,x,y,paint);}
+        private void stroke(Canvas c,float x1,float y1,float x2,float y2,int col,float w){color(col);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(w);c.drawLine(x1,y1,x2,y2,paint);paint.setStyle(Paint.Style.FILL);}
+        private void arc(Canvas c,RectF r,float from,float sweep,int col,float width){color(col);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(width);paint.setStrokeCap(Paint.Cap.ROUND);c.drawArc(r,from,sweep,false,paint);paint.setStyle(Paint.Style.FILL);}
+        @Override protected void onDraw(Canvas actual){super.onDraw(actual);float sx=getWidth()/1024f,sy=getHeight()/510f;actual.save();actual.scale(sx,sy);
+            Canvas c=actual; c.drawColor(Color.rgb(7,12,22));
+            int blue=Color.rgb(30,160,255),white=Color.rgb(231,239,251),dim=Color.rgb(100,120,147),red=Color.rgb(247,58,70),green=Color.rgb(42,211,131);
+            txt(c,"R",512,52,46,blue,true);txt(c,"GOLF  •  DIGITAL COCKPIT",512,80,16,dim,false);
+            stroke(c,48,93,976,93,Color.rgb(32,55,79),2);
+            arc(c,new RectF(65,128,393,456),125,290,Color.rgb(30,49,70),19);arc(c,new RectF(65,128,393,456),125,0.1f,blue,19);
+            arc(c,new RectF(631,128,959,456),125,290,Color.rgb(30,49,70),19);arc(c,new RectF(631,128,959,456),125,0.1f,blue,19);
+            boolean fresh=telemetryFresh();
+            txt(c,fresh?String.valueOf(speedCandidate):"—",229,301,96,white,true);txt(c,"km/h",229,347,23,dim,false);
+            txt(c,"ШВИДКІСТЬ • КАНДИДАТ 0x41/02",229,484,14,dim,false);
+            txt(c,fresh?String.valueOf(rpmCandidate):"—",795,301,96,white,true);txt(c,"rpm",795,347,23,dim,false);
+            txt(c,"ОБЕРТИ • КАНДИДАТ 0x41/02",795,484,14,dim,false);
+            color(Color.rgb(16,27,43));c.drawRoundRect(new RectF(407,124,617,450),20,20,paint);
+            // Stylized top-down hatchback, drawn with vector geometry.
+            color(Color.rgb(44,62,83));c.drawRoundRect(new RectF(461,160,563,412),34,34,paint);
+            color(Color.rgb(88,111,134));c.drawRoundRect(new RectF(471,171,553,400),27,27,paint);
+            color(Color.rgb(15,30,49));c.drawRoundRect(new RectF(478,223,546,322),14,14,paint);
+            color(Color.rgb(23,44,65));c.drawRoundRect(new RectF(479,178,545,216),14,14,paint);
+            color(Color.rgb(23,44,65));c.drawRoundRect(new RectF(479,333,545,392),14,14,paint);
+            color(Color.rgb(8,13,22));c.drawRoundRect(new RectF(448,204,465,254),5,5,paint);c.drawRoundRect(new RectF(559,204,576,254),5,5,paint);
+            c.drawRoundRect(new RectF(448,335,465,384),5,5,paint);c.drawRoundRect(new RectF(559,335,576,384),5,5,paint);
+            long now=android.os.SystemClock.elapsedRealtime();boolean live=callbackActive&&registerSucceeded&&door24At>0&&now-door24At<SIGNAL_TTL_MS;
+            int state=live?door24:-1;int status=state==1?red:state==0?green:dim;
+            // Only the DRIVER DOOR was tested. No individual-door decoding claimed.
+            stroke(c,456,259,456,323,status,8);
+            txt(c,state==1?"ДВЕРІ: ВІДКРИТО":state==0?"ДВЕРІ: ЗАКРИТО":"ДВЕРІ: НЕВІДОМО",512,437,15,status,true);
+            txt(c,callbackActive?"CAN: ПРИЙОМ АКТИВНИЙ":"CAN: ПРИЙОМ ЗУПИНЕНО",512,110,14,callbackActive?green:dim,false);
+            txt(c,"ПАЛИВО: "+(fresh?fuelRaw+" raw":"—")+"    НАПРУГА: "+(fresh?String.format(Locale.US,"%.2f",voltageCentivolts/100.0)+" V":"—")+"    ПРОБІГ: "+(fresh?mileageCandidate+" ?":"—"),512,468,15,white,false);
+            txt(c,"НЕПЕРЕВІРЕНІ ПОЛЯ 0x41/02  •  ТЕСТ ЛИШЕ ВОДІЙСЬКИХ ДВЕРЕЙ  •  CAN TX: НІ",512,503,12,dim,false);
+            actual.restore();
+        }
     }
     private TextView indicator(LinearLayout row,String initial,int background){
         TextView t=new TextView(this);t.setGravity(android.view.Gravity.CENTER);t.setText(initial);
@@ -273,6 +350,7 @@ public class MainActivity extends Activity {
                 String data=hexRange(all,offset,frameLen);
                 String prev=previous.put(key,data);
                 boolean changed=prev==null||!prev.equals(data);
+                synchronized(statsLock){commandCounts.put(key,commandCounts.containsKey(key)?commandCounts.get(key)+1:1);lastCommandHex.put(key,data);if(changed)changedCounts.put(key,changedCounts.containsKey(key)?changedCounts.get(key)+1:1);}
                 addPhaseSample(key,all,offset,frameLen);
                 analyzeSignals(all,offset,frameLen);
                 log("FRAME #"+parsedFrames+" phase="+phase+" cmd="+key+" check=OK changed="+changed+" HEX="+data);
@@ -285,6 +363,18 @@ public class MainActivity extends Activity {
     private void analyzeSignals(byte[] b,int pos,int frameLen){
         int cmd=b[pos+1]&255, len=b[pos+2]&255;
         long now=android.os.SystemClock.elapsedRealtime();
+        if(cmd==0x41 && len==13 && (b[pos+3]&255)==0x02){
+            // Payload: 02 RPMhi RPMlo SPEEDhi SPEEDlo Vhi Vlo Thi Tlo ODOhi ODOmid ODOlo FUEL.
+            // This is a hypothesis based on a Raise VW(PQ) community decoder, not validated for this CANBOX.
+            rpmCandidate=((b[pos+4]&255)<<8)|(b[pos+5]&255);
+            speedCandidate=((b[pos+6]&255)<<8)|(b[pos+7]&255);
+            voltageCentivolts=((b[pos+8]&255)<<8)|(b[pos+9]&255);
+            int tempRaw=((b[pos+10]&255)<<8)|(b[pos+11]&255);
+            outsideTempTenths=(short)tempRaw;
+            mileageCandidate=((b[pos+12]&255)<<16)|((b[pos+13]&255)<<8)|(b[pos+14]&255);
+            fuelRaw=b[pos+15]&255;
+            telemetryAt=now;telemetryFrames++;telemetryHex=hexRange(b,pos,frameLen);
+        }
         if(cmd==0x41 && len==2){
             int a=b[pos+3]&255, v=b[pos+4]&255;
             if(a==1){
@@ -305,7 +395,10 @@ public class MainActivity extends Activity {
     }
     private void resetSignals(){
         synchronized(signalLock){door41=door24=ignition41=ignition24=-1;
-            door41At=door24At=ignition41At=ignition24At=0;rxStream.reset();}
+            door41At=door24At=ignition41At=ignition24At=0;rxStream.reset();
+            rpmCandidate=speedCandidate=voltageCentivolts=fuelRaw=mileageCandidate=-1;
+            outsideTempTenths=Integer.MIN_VALUE;telemetryAt=0;telemetryFrames=0;telemetryHex="";}
+        synchronized(statsLock){commandCounts.clear();lastCommandHex.clear();changedCounts.clear();}
         shownDoor="";shownIgnition="";
     }
     private void updateSignalDisplay(){
@@ -319,14 +412,24 @@ public class MainActivity extends Activity {
         boolean c=live&&now-ignition41At<SIGNAL_TTL_MS&&ignition41At>0;
         boolean d=live&&now-ignition24At<SIGNAL_TTL_MS&&ignition24At>0;
         String ign=(c&&d&&ignition41==ignition24)?(ignition41==1?"ON":"OFF"):"НЕВІДОМО";
-        doorView.setText("ДВЕРІ\n"+door);
+        doorView.setText("ДВЕРІ (тест водійських)\n"+door);
         doorView.setBackgroundColor("ВІДКРИТІ".equals(door)?Color.rgb(155,45,45):"ЗАКРИТІ".equals(door)?Color.rgb(28,115,68):Color.rgb(65,75,88));
         ignitionView.setText("ЗАПАЛЮВАННЯ\n"+ign);
         ignitionView.setBackgroundColor("ON".equals(ign)?Color.rgb(27,100,140):Color.rgb(65,75,88));
         evidenceView.setText("41: "+(a?(door41==1?"OPEN":"CLOSED"):"—")+"   24: "+(b?(door24==1?"OPEN":"CLOSED"):"—")+"   |  результат: "+(door.equals("ВІДКРИТІ")?"OPEN":door.equals("ЗАКРИТІ")?"CLOSED":"UNKNOWN")+" (основний: 24)");
         if(!door.equals(shownDoor)){log("DOOR_INDICATOR "+shownDoor+" -> "+door+" (41="+(a?door41:-1)+",24="+(b?door24:-1)+", source=24, 41confirm="+(a&&door41==door24)+")");shownDoor=door;}
         if(!ign.equals(shownIgnition)){log("IGNITION_INDICATOR "+shownIgnition+" -> "+ign);shownIgnition=ign;}
+        if(telemetryView!=null){boolean fresh=telemetryFresh();telemetryView.setText(
+            "0x41/02 • КАНДИДАТИ, НЕ ПІДТВЕРДЖЕНО • кадрів: "+telemetryFrames+"\n"+
+            "RPM: "+(fresh?rpmCandidate:"—")+"   Швидкість: "+(fresh?speedCandidate:"—")+" км/год\n"+
+            "Напруга: "+(fresh?String.format(Locale.US,"%.2f",voltageCentivolts/100.0):"—")+" V   Зовн. t°: "+(fresh?String.format(Locale.US,"%.1f",outsideTempTenths/10.0):"—")+" °C\n"+
+            "Пробіг: "+(fresh?mileageCandidate:"—")+" (кандидат)   Паливо: "+(fresh?fuelRaw:"—")+" raw (НЕ %)\n"+
+            "Немає свіжого пакета = —. Температура ОЖ поки не визначена.");}
+        if(dashboard!=null)dashboard.invalidate();
     }
+    private boolean telemetryFresh(){return callbackActive&&registerSucceeded&&telemetryAt>0&&android.os.SystemClock.elapsedRealtime()-telemetryAt<TELEMETRY_TTL_MS;}
+    private void showTelemetryHex(){new AlertDialog.Builder(this).setTitle("0x41/02: останній кадр").setMessage("Пакетів: "+telemetryFrames+"\n"+(telemetryHex.length()==0?"Ще немає пакетів":telemetryHex)+"\n\nПоля кандидати, потрібна перевірка зі штатною панеллю. Паливо відображається RAW, не відсотки.").setPositiveButton("OK",null).show();}
+    private void showCommandCatalog(){StringBuilder sb=new StringBuilder();synchronized(statsLock){for(String cmd:commandCounts.keySet()){sb.append("CMD ").append(cmd).append("  кадрів=").append(commandCounts.get(cmd)).append("  змін=").append(changedCounts.get(cmd)).append("\n").append(lastCommandHex.get(cmd)).append("\n\n");}}if(sb.length()==0)sb.append("Поки немає прийнятих кадрів.");new AlertDialog.Builder(this).setTitle("Каталог команд CANBOX").setMessage(sb.toString()).setPositiveButton("OK",null).show();}
     private String hexRange(byte[] bytes,int start,int len){
         StringBuilder sb=new StringBuilder();for(int i=start;i<start+len;i++){if(i>start)sb.append(' ');sb.append(String.format(Locale.US,"%02X",bytes[i]&255));}return sb.toString();
     }
