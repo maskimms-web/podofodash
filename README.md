@@ -1,19 +1,15 @@
-# Golf CAN Signal Analyzer v1.1 — VW Golf 5 / Podofo 8227L
+# Golf CAN Door Monitor v1.2 — Podofo 8227L / Golf 5
 
-Source ZIP for GitHub Actions, not a prebuilt APK. Android 8.1 (SDK 27), 1024x600. No root, no CAN TX.
+Source project ZIP for GitHub Actions; APK is not included. Android 8.1, 1024×600.
 
 ## Build
-Upload all ZIP contents into a GitHub repository. Actions > Build Golf CAN Signal Analyzer v1.1 > Run workflow. Download artifact `GolfCanSignalAnalyzer-v1.1-APK`, install `app-debug.apk`.
+Upload extracted files into GitHub repository. Actions → Build Golf CAN Door Monitor v1.2 → Run workflow. Download `GolfCanDoorMonitor-v1.2-APK` and install `app-debug.apk`.
 
-## Test — vehicle parked
-1. USB ПАПКА: select USB folder.
-2. Start `▶ ПРИЙОМ 90 с`, confirm. Callback registration is experimental and could affect stock CAN software.
-3. Each phase button starts a **12-second window**: first 3 seconds are transition, next 9 seconds sampled. Press marker immediately before the physical action. Do not press another phase button until previous phase finishes.
-4. Suggested phases: ignition OFF baseline (already off), ignition ON (turn key), ignition OFF (turn off); doors closed, doors open, doors closed; idle and higher RPM only if safe while stationary. To sample the same phase twice, wait for the phase-end message before pressing again.
-5. Press `ПІДСУМОК` to log command+payload frequencies for stable windows. Auto-stop at 90 s, or `■ СТОП` sooner. Check `UNREGISTER result=true`.
-6. USB ЗВІТ, share `GolfCanSignalAnalyzer-v1.1-report.txt`.
+## Parked test
+1. Select USB folder, start 90s callback with confirmation.
+2. With ignition ON (engine not needed), close all doors; wait for indicator, then open driver's door; wait; close it; wait. Repeat twice. Leave 5-10s between actions.
+3. If desired, test ignition OFF, but door indicator may show UNKNOWN when ignition is off.
+4. Stop, export USB report `GolfCanDoorMonitor-v1.2-report.txt`.
 
-## Data handling
-Logs all callback events and valid 2E frames, and collects stable-phase statistics only after 3-second settling. Groups by phase label, command and raw payload. A marker is not proof of a specific signal; other vehicle activity can overlap. No automatic RPM, speed, ignition or door value is asserted. `type` is the usable byte count. Checksum: sum of frame bytes mod 256 == 0x2D. Frames may span callbacks and partial frames are noted; v1.1 is not a fully streaming reassembler.
-
-Safety: use only while parked; if stock CAN behavior changes, stop and reboot head unit if needed. APK build and runtime are not verified locally.
+## Experimental rules
+DOOR OPEN only if `41 01 A0` and `24 02 00` agree within 12s; DOOR CLOSED only if `41 01 A1` and `24 02 01` agree. Other packets or missing/stale signals => UNKNOWN. This is not proven vehicle-wide door state. These codes are correlations from prior logs and may represent another status. Ignition ON/OFF also uses two tentative matching signals. No CAN TX; callback registration can affect OEM service, so do not run while driving. Automatic unregister after 90 seconds, manual STOP. Includes streaming frame reassembly, 12-second marker lockout. Runtime untested.

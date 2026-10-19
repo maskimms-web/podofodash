@@ -33,6 +33,14 @@ import java.text.SimpleDateFormat;
 
 public class MainActivity extends Activity {
     private TextView logView;
+    private TextView doorView, ignitionView, evidenceView;
+    private volatile int door41=-1, door24=-1, ignition41=-1, ignition24=-1;
+    private volatile long door41At=0, door24At=0, ignition41At=0, ignition24At=0;
+    private volatile String shownDoor="", shownIgnition="";
+    private static final long SIGNAL_TTL_MS=12000L;
+    private final Object signalLock=new Object();
+    private final java.io.ByteArrayOutputStream rxStream=new java.io.ByteArrayOutputStream();
+    private final Runnable refreshSignals=new Runnable(){public void run(){updateSignalDisplay();mainHandler.postDelayed(this,1000);}};
     private final StringBuilder logs = new StringBuilder();
     private static final int PICK_USB = 41;
     private Uri usbTree;
@@ -66,8 +74,14 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle b) {
         super.onCreate(b);
         LinearLayout root = new LinearLayout(this); root.setOrientation(1); root.setPadding(10,7,10,7); root.setBackgroundColor(Color.rgb(14,21,30));
-        TextView title = new TextView(this); title.setText("GOLF CAN v1.1  |  SIGNAL ANALYZER"); title.setTextColor(Color.WHITE); title.setTextSize(18); root.addView(title);
+        TextView title = new TextView(this); title.setText("GOLF CAN v1.2  |  LIVE DOOR TEST"); title.setTextColor(Color.WHITE); title.setTextSize(18); root.addView(title);
         TextView sub = new TextView(this); sub.setText("8227L • SDK " + Build.VERSION.SDK_INT + " • 90 с автостоп • без CAN TX"); sub.setTextColor(Color.LTGRAY); sub.setTextSize(12); root.addView(sub);
+        LinearLayout indicators=new LinearLayout(this);indicators.setOrientation(LinearLayout.HORIZONTAL);
+        root.addView(indicators,new LinearLayout.LayoutParams(-1,104));
+        doorView=indicator(indicators,"ДВЕРІ\nНЕВІДОМО",Color.rgb(65,75,88));
+        ignitionView=indicator(indicators,"ЗАПАЛЮВАННЯ\nНЕВІДОМО",Color.rgb(65,75,88));
+        evidenceView=new TextView(this);evidenceView.setText("Експеримент: 41 + 24 мають підтвердити стан дверей. Жодних CAN TX.");
+        evidenceView.setTextColor(Color.LTGRAY);evidenceView.setTextSize(11);root.addView(evidenceView);
         LinearLayout line1 = buttonRow(root);
         addSmallButton(line1,"▶ ПРИЙОМ 90 с",new View.OnClickListener(){public void onClick(View v){confirmCallback();}});
         addSmallButton(line1,"■ СТОП",new View.OnClickListener(){public void onClick(View v){stopCallback();}});
@@ -85,10 +99,17 @@ public class MainActivity extends Activity {
         addSmallButton(line3,"ПІДСУМОК",new View.OnClickListener(){public void onClick(View v){showSummary();}});
         logView = new TextView(this); logView.setTextColor(Color.rgb(196,236,208)); logView.setTextSize(11); logView.setPadding(8,6,8,6);
         ScrollView sc = new ScrollView(this); sc.setFillViewport(false); sc.addView(logView); root.addView(sc,new LinearLayout.LayoutParams(-1,0,1)); setContentView(root);
-        report = new File(getExternalFilesDir(null),"GolfCanSignalAnalyzer-v1.1-report.txt");
+        report = new File(getExternalFilesDir(null),"GolfCanDoorMonitor-v1.2-report.txt");
         String saved=getPreferences(0).getString("usb_tree",null); if(saved!=null){usbTree=Uri.parse(saved);}
-        log("Старт v1.1. Signal Analyzer. Немає CAN TX; callback тільки за підтвердженням.");
+        mainHandler.post(refreshSignals);
+        log("Старт v1.2. Live Door Test. Немає CAN TX; callback тільки за підтвердженням.");
         log("Папка копій: " + getExternalFilesDir(null));
+    }
+    private TextView indicator(LinearLayout row,String initial,int background){
+        TextView t=new TextView(this);t.setGravity(android.view.Gravity.CENTER);t.setText(initial);
+        t.setTextColor(Color.WHITE);t.setTextSize(20);t.setTypeface(null,1);
+        t.setBackgroundColor(background);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-1,1);
+        lp.setMargins(3,2,3,2);row.addView(t,lp);return t;
     }
     private LinearLayout buttonRow(LinearLayout root){
         LinearLayout r=new LinearLayout(this);r.setOrientation(LinearLayout.HORIZONTAL);root.addView(r,new LinearLayout.LayoutParams(-1,-2));return r;
@@ -107,7 +128,7 @@ public class MainActivity extends Activity {
         java.lang.reflect.Field f=stub.getDeclaredField(fieldName);f.setAccessible(true);return f.getInt(null);
     }
     private void startCallback(){
-        synchronized(lock){if(callbackActive){log("CALLBACK already running");return;}callbackActive=true;callbackEvents=0;parsedFrames=0;badChecksums=0;registerSucceeded=false;previous.clear(); synchronized(statsLock){phaseCounts.clear();} phase="БЕЗ ПОЗНАЧКИ";phaseStartedMs=0;phaseSequence=0;}
+        synchronized(lock){if(callbackActive){log("CALLBACK already running");return;}callbackActive=true;resetSignals();callbackEvents=0;parsedFrames=0;badChecksums=0;registerSucceeded=false;previous.clear(); synchronized(statsLock){phaseCounts.clear();} phase="БЕЗ ПОЗНАЧКИ";phaseStartedMs=0;phaseSequence=0;}
         log("=== CAN LIVE: реєстрація (90 с) ===");
         try{
             Class<?> sm=Class.forName("android.os.ServiceManager");
@@ -160,6 +181,7 @@ public class MainActivity extends Activity {
         mainHandler.removeCallbacks(autoStop);mainHandler.removeCallbacks(finishPhase);finishCurrentPhase();
         final IBinder remote;final Binder local;final int unreg;
         synchronized(lock){remote=remoteCanbus;local=callbackBinder;unreg=unregisterCode;remoteCanbus=null;callbackBinder=null;unregisterCode=-1;callbackActive=false;}
+        updateSignalDisplay();
         if(local==null){log("CALLBACK не активний. Отримано="+callbackEvents);return;}
         new Thread(new Runnable(){public void run(){
             try{
@@ -174,6 +196,11 @@ public class MainActivity extends Activity {
     }
     private void mark(String name){
         if(!callbackActive){log("МАРКЕР: спочатку запусти прийом");return;}
+        if(!"БЕЗ ПОЗНАЧКИ".equals(phase)){
+            long remain=SETTLE_MS+SAMPLE_MS-(android.os.SystemClock.elapsedRealtime()-phaseStartedMs);
+            if(remain>0){log("MARK BLOCKED: дочекайся завершення фази ще "+((remain+999)/1000)+" с");
+                Toast.makeText(this,"Зачекай ще "+((remain+999)/1000)+" с",Toast.LENGTH_SHORT).show();return;}
+        }
         finishCurrentPhase();
         phase=name;
         phaseStartedMs=android.os.SystemClock.elapsedRealtime();
@@ -215,31 +242,90 @@ public class MainActivity extends Activity {
             Integer n=counts.get(key);counts.put(key,n==null?1:n+1);
         }
     }
+    // Callback chunks can split frames. Keep a bounded stream and resynchronize on 0x2E.
     private void decodeFrames(byte[] bytes,int len,int event){
-        if(bytes==null || len<4)return;
-        int offset=0;
-        while(offset<len){
-            if((bytes[offset]&255)!=0x2E){offset++;continue;}
-            if(offset+3>len)break;
-            int payload=bytes[offset+2]&255;
-            int frameLen=payload+4;
-            if(frameLen<4 || frameLen>64 || offset+frameLen>len){
-                log("FRAME_PARTIAL event="+event+" offset="+offset+" payload="+payload);offset++;continue;
+        if(bytes==null || len<=0)return;
+        synchronized(signalLock){
+            rxStream.write(bytes,0,Math.min(len,bytes.length));
+            byte[] all=rxStream.toByteArray();int offset=0;
+            while(offset<all.length){
+                if((all[offset]&255)!=0x2E){offset++;continue;}
+                if(all.length-offset<3)break;
+                int payload=all[offset+2]&255;int frameLen=payload+4;
+                if(frameLen<4||frameLen>64){offset++;continue;}
+                if(all.length-offset<frameLen){
+                    // Avoid an invalid header stalling a valid complete frame later in the buffer.
+                    int next=-1;
+                    for(int j=offset+1;j+5<all.length;j++){
+                        if((all[j]&255)!=0x2E)continue;
+                        int n=(all[j+2]&255)+4;
+                        if(n<4||n>64||j+n>all.length)continue;
+                        int sm=0;for(int k=j;k<j+n;k++)sm=(sm+(all[k]&255))&255;
+                        if(sm==0x2D){next=j;break;}
+                    }
+                    if(next>=0){offset=next;continue;}
+                    break;
+                }
+                int sum=0;for(int i=offset;i<offset+frameLen;i++)sum=(sum+(all[i]&255))&255;
+                if(sum!=0x2D){badChecksums++;offset++;continue;}
+                parsedFrames++;
+                String key=String.format(Locale.US,"%02X",all[offset+1]&255);
+                String data=hexRange(all,offset,frameLen);
+                String prev=previous.put(key,data);
+                boolean changed=prev==null||!prev.equals(data);
+                addPhaseSample(key,all,offset,frameLen);
+                analyzeSignals(all,offset,frameLen);
+                log("FRAME #"+parsedFrames+" phase="+phase+" cmd="+key+" check=OK changed="+changed+" HEX="+data);
+                offset+=frameLen;
             }
-            int sum=0;for(int i=offset;i<offset+frameLen;i++)sum=(sum+(bytes[i]&255))&255;
-            // Raise 2E framing observed: 2E CMD LEN PAYLOAD... CHECKSUM, checksum makes byte sum == 0x2D.
-            boolean valid=(sum==0x2D);
-            if(!valid)badChecksums++;
-            parsedFrames++;
-            String key=String.format(Locale.US,"%02X",bytes[offset+1]&255);
-            String data=hexRange(bytes,offset,frameLen);
-            String prev=previous.put(key,data);
-            boolean changed=prev==null||!prev.equals(data);
-            if(valid)addPhaseSample(key,bytes,offset,frameLen);
-            log("FRAME #"+parsedFrames+" phase="+phase+" cmd="+key+" payload="+payload+" sum="+String.format(Locale.US,"%02X",sum)+" check="+(valid?"OK":"UNKNOWN")+" changed="+changed+" HEX="+data);
-            offset+=frameLen;
+            rxStream.reset();
+            if(offset<all.length){int keep=Math.min(all.length-offset,64);rxStream.write(all,all.length-keep,keep);}
         }
     }
+    private void analyzeSignals(byte[] b,int pos,int frameLen){
+        int cmd=b[pos+1]&255, len=b[pos+2]&255;
+        long now=android.os.SystemClock.elapsedRealtime();
+        if(cmd==0x41 && len==2){
+            int a=b[pos+3]&255, v=b[pos+4]&255;
+            if(a==1){
+                if(v==0xA0||v==0xA1){door41=(v==0xA0?1:0);door41At=now;}
+                else {door41=-1;door41At=0;}
+                if(v==0x80||v==0x81) {ignition41=0;ignition41At=now;}
+                else if(v==0xA0||v==0xA1) {ignition41=1;ignition41At=now;}
+            }
+        }
+        if(cmd==0x24 && len==2){
+            int a=b[pos+3]&255,v=b[pos+4]&255;
+            if(a==2 && (v==0||v==1)){door24=(v==0?1:0);door24At=now;ignition24=1;ignition24At=now;}
+            else if(a==0){door24=-1;door24At=0;ignition24=0;ignition24At=now;}
+        }
+        mainHandler.post(new Runnable(){public void run(){updateSignalDisplay();}});
+    }
+    private void resetSignals(){
+        synchronized(signalLock){door41=door24=ignition41=ignition24=-1;
+            door41At=door24At=ignition41At=ignition24At=0;rxStream.reset();}
+        shownDoor="";shownIgnition="";
+    }
+    private void updateSignalDisplay(){
+        if(doorView==null)return;
+        long now=android.os.SystemClock.elapsedRealtime();
+        boolean live=callbackActive && registerSucceeded;
+        boolean a=live && now-door41At<SIGNAL_TTL_MS && door41At>0;
+        boolean b=live && now-door24At<SIGNAL_TTL_MS && door24At>0;
+        String door="НЕВІДОМО";
+        if(a&&b&&door41==door24)door=(door41==1?"ВІДКРИТІ":"ЗАКРИТІ");
+        boolean c=live&&now-ignition41At<SIGNAL_TTL_MS&&ignition41At>0;
+        boolean d=live&&now-ignition24At<SIGNAL_TTL_MS&&ignition24At>0;
+        String ign=(c&&d&&ignition41==ignition24)?(ignition41==1?"ON":"OFF"):"НЕВІДОМО";
+        doorView.setText("ДВЕРІ\n"+door);
+        doorView.setBackgroundColor("ВІДКРИТІ".equals(door)?Color.rgb(155,45,45):"ЗАКРИТІ".equals(door)?Color.rgb(28,115,68):Color.rgb(65,75,88));
+        ignitionView.setText("ЗАПАЛЮВАННЯ\n"+ign);
+        ignitionView.setBackgroundColor("ON".equals(ign)?Color.rgb(27,100,140):Color.rgb(65,75,88));
+        evidenceView.setText("41: "+(a?(door41==1?"OPEN":"CLOSED"):"—")+"   24: "+(b?(door24==1?"OPEN":"CLOSED"):"—")+"   |  обидва сигнали потрібні");
+        if(!door.equals(shownDoor)){log("DOOR_INDICATOR "+shownDoor+" -> "+door+" (41="+(a?door41:-1)+",24="+(b?door24:-1)+")");shownDoor=door;}
+        if(!ign.equals(shownIgnition)){log("IGNITION_INDICATOR "+shownIgnition+" -> "+ign);shownIgnition=ign;}
+    }
+    @Override protected void onDestroy(){mainHandler.removeCallbacks(refreshSignals);stopCallback();super.onDestroy();}
     private String hexRange(byte[] bytes,int start,int len){
         StringBuilder sb=new StringBuilder();for(int i=start;i<start+len;i++){if(i>start)sb.append(' ');sb.append(String.format(Locale.US,"%02X",bytes[i]&255));}return sb.toString();
     }
