@@ -1,21 +1,19 @@
-# Golf CAN Live Decoder v1.0 — Podofo 8227L / VW Golf 5
+# Golf CAN Signal Analyzer v1.1 — VW Golf 5 / Podofo 8227L
 
-Build with GitHub Actions: Actions → Build Golf CAN Live Decoder v1.0 → Run workflow → artifact GolfCanLiveDecoder-v1.0-APK → app-debug.apk.
+Source ZIP for GitHub Actions, not a prebuilt APK. Android 8.1 (SDK 27), 1024x600. No root, no CAN TX.
 
-1024×600 layout: 3 rows of 4 compact buttons; log scrolls below. Android minSdk 23, targetSdk 27.
+## Build
+Upload all ZIP contents into a GitHub repository. Actions > Build Golf CAN Signal Analyzer v1.1 > Run workflow. Download artifact `GolfCanSignalAnalyzer-v1.1-APK`, install `app-debug.apk`.
 
-## Test (parked vehicle only)
-1. Install APK. Press USB ПАПКА and select USB stick.
-2. Press ▶ ПРИЙОМ 60 с and confirm. Start with all doors closed, ignition off.
-3. Press ДВЕРІ ВІДКР. immediately before opening driver's door, then ДВЕРІ ЗАКР. before closing it.
-4. Press ЗАПАЛ. ON before turning ignition on; ЗАПАЛ. OFF before turning it off.
-5. Optionally, with the vehicle stationary and in neutral, press МАРКЕР: ХОЛОСТІ and then МАРКЕР: ГАЗ for a brief change of RPM. Do not do this if unsafe.
-6. Wait for auto-stop and UNREGISTER result=true, or press ■ СТОП.
-7. Press USB ЗВІТ and share GolfCanLiveDecoder-v1.0-report.txt.
+## Test — vehicle parked
+1. USB ПАПКА: select USB folder.
+2. Start `▶ ПРИЙОМ 90 с`, confirm. Callback registration is experimental and could affect stock CAN software.
+3. Each phase button starts a **12-second window**: first 3 seconds are transition, next 9 seconds sampled. Press marker immediately before the physical action. Do not press another phase button until previous phase finishes.
+4. Suggested phases: ignition OFF baseline (already off), ignition ON (turn key), ignition OFF (turn off); doors closed, doors open, doors closed; idle and higher RPM only if safe while stationary. To sample the same phase twice, wait for the phase-end message before pressing again.
+5. Press `ПІДСУМОК` to log command+payload frequencies for stable windows. Auto-stop at 90 s, or `■ СТОП` sooner. Check `UNREGISTER result=true`.
+6. USB ЗВІТ, share `GolfCanSignalAnalyzer-v1.1-report.txt`.
 
-The app sends NO CAN commands; it registers and removes a Binder callback. Registration may still interfere with the stock CAN service. Stop immediately if stock functionality changes, and reboot the head unit if necessary. No testing while driving.
+## Data handling
+Logs all callback events and valid 2E frames, and collects stable-phase statistics only after 3-second settling. Groups by phase label, command and raw payload. A marker is not proof of a specific signal; other vehicle activity can overlap. No automatic RPM, speed, ignition or door value is asserted. `type` is the usable byte count. Checksum: sum of frame bytes mod 256 == 0x2D. Frames may span callbacks and partial frames are noted; v1.1 is not a fully streaming reassembler.
 
-## Parsing
-onResult(byte[],int): int is interpreted as the count of meaningful bytes (v0.9 observed 64-byte padded buffers). 2E CMD LEN PAYLOAD CHECKSUM frames; observed checksum makes the sum of all frame bytes mod 256 equal 0x2D. The decoder records raw callback bytes, frames, phase markers and changes; it does NOT assert which byte is RPM or door state.
-
-This ZIP is source only; APK is built by GitHub Actions. The build has not been run locally.
+Safety: use only while parked; if stock CAN behavior changes, stop and reboot head unit if needed. APK build and runtime are not verified locally.

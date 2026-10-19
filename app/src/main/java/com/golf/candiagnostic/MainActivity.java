@@ -49,6 +49,13 @@ public class MainActivity extends Activity {
     private volatile int badChecksums = 0;
     private volatile String phase = "БЕЗ ПОЗНАЧКИ";
     private final Map<String,String> previous = new HashMap<String,String>();
+    private final Map<String,Map<String,Integer>> phaseCounts = new LinkedHashMap<String,Map<String,Integer>>();
+    private volatile long phaseStartedMs = 0;
+    private volatile int phaseSequence = 0;
+    private final long SETTLE_MS = 3000L;
+    private final long SAMPLE_MS = 9000L;
+    private final Object statsLock = new Object();
+    private final Runnable finishPhase = new Runnable(){public void run(){finishCurrentPhase();}};
     private volatile boolean registerSucceeded = false;
     private IBinder remoteCanbus;
     private Binder callbackBinder;
@@ -59,10 +66,10 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle b) {
         super.onCreate(b);
         LinearLayout root = new LinearLayout(this); root.setOrientation(1); root.setPadding(10,7,10,7); root.setBackgroundColor(Color.rgb(14,21,30));
-        TextView title = new TextView(this); title.setText("GOLF CAN v1.0  |  LIVE DECODER"); title.setTextColor(Color.WHITE); title.setTextSize(18); root.addView(title);
-        TextView sub = new TextView(this); sub.setText("8227L • SDK " + Build.VERSION.SDK_INT + " • 60 с автостоп • без CAN TX"); sub.setTextColor(Color.LTGRAY); sub.setTextSize(12); root.addView(sub);
+        TextView title = new TextView(this); title.setText("GOLF CAN v1.1  |  SIGNAL ANALYZER"); title.setTextColor(Color.WHITE); title.setTextSize(18); root.addView(title);
+        TextView sub = new TextView(this); sub.setText("8227L • SDK " + Build.VERSION.SDK_INT + " • 90 с автостоп • без CAN TX"); sub.setTextColor(Color.LTGRAY); sub.setTextSize(12); root.addView(sub);
         LinearLayout line1 = buttonRow(root);
-        addSmallButton(line1,"▶ ПРИЙОМ 60 с",new View.OnClickListener(){public void onClick(View v){confirmCallback();}});
+        addSmallButton(line1,"▶ ПРИЙОМ 90 с",new View.OnClickListener(){public void onClick(View v){confirmCallback();}});
         addSmallButton(line1,"■ СТОП",new View.OnClickListener(){public void onClick(View v){stopCallback();}});
         addSmallButton(line1,"USB ПАПКА",new View.OnClickListener(){public void onClick(View v){chooseUsb();}});
         addSmallButton(line1,"USB ЗВІТ",new View.OnClickListener(){public void onClick(View v){new Thread(new Runnable(){public void run(){saveToUsb();}}).start();}});
@@ -75,12 +82,12 @@ public class MainActivity extends Activity {
         addSmallButton(line3,"МАРКЕР: ХОЛОСТІ",new View.OnClickListener(){public void onClick(View v){mark("ДВИГУН ХОЛОСТІ");}});
         addSmallButton(line3,"МАРКЕР: ГАЗ",new View.OnClickListener(){public void onClick(View v){mark("ОБЕРТИ ПІДВИЩЕНО");}});
         addSmallButton(line3,"ДІАГНОСТИКА",new View.OnClickListener(){public void onClick(View v){new Thread(new Runnable(){public void run(){runAll();}}).start();}});
-        addSmallButton(line3,"СКИНУТИ МАРКЕР",new View.OnClickListener(){public void onClick(View v){mark("БЕЗ ПОЗНАЧКИ");}});
+        addSmallButton(line3,"ПІДСУМОК",new View.OnClickListener(){public void onClick(View v){showSummary();}});
         logView = new TextView(this); logView.setTextColor(Color.rgb(196,236,208)); logView.setTextSize(11); logView.setPadding(8,6,8,6);
         ScrollView sc = new ScrollView(this); sc.setFillViewport(false); sc.addView(logView); root.addView(sc,new LinearLayout.LayoutParams(-1,0,1)); setContentView(root);
-        report = new File(getExternalFilesDir(null),"GolfCanLiveDecoder-v1.0-report.txt");
+        report = new File(getExternalFilesDir(null),"GolfCanSignalAnalyzer-v1.1-report.txt");
         String saved=getPreferences(0).getString("usb_tree",null); if(saved!=null){usbTree=Uri.parse(saved);}
-        log("Старт v1.0. Live Decoder. Немає CAN TX; callback тільки за підтвердженням.");
+        log("Старт v1.1. Signal Analyzer. Немає CAN TX; callback тільки за підтвердженням.");
         log("Папка копій: " + getExternalFilesDir(null));
     }
     private LinearLayout buttonRow(LinearLayout root){
@@ -92,16 +99,16 @@ public class MainActivity extends Activity {
     }
     private void confirmCallback(){
         new AlertDialog.Builder(this).setTitle("CAN Callback — експеримент")
-          .setMessage("CAN callback може вплинути на штатну CAN-програму. Лише на припаркованому авто, 60 секунд, автоматична відписка. Не використовувати під час руху. Продовжити?")
+          .setMessage("CAN callback може вплинути на штатну CAN-програму. Лише на припаркованому авто, 90 секунд, автоматична відписка. Не використовувати під час руху. Продовжити?")
           .setNegativeButton("Скасувати",null)
-          .setPositiveButton("Запустити 60 с",(d,w)->new Thread(new Runnable(){public void run(){startCallback();}}).start()).show();
+          .setPositiveButton("Запустити 90 с",(d,w)->new Thread(new Runnable(){public void run(){startCallback();}}).start()).show();
     }
     private int transactionCode(Class<?> stub,String fieldName) throws Exception {
         java.lang.reflect.Field f=stub.getDeclaredField(fieldName);f.setAccessible(true);return f.getInt(null);
     }
     private void startCallback(){
-        synchronized(lock){if(callbackActive){log("CALLBACK already running");return;}callbackActive=true;callbackEvents=0;parsedFrames=0;badChecksums=0;registerSucceeded=false;previous.clear();}
-        log("=== CAN LIVE: реєстрація (60 с) ===");
+        synchronized(lock){if(callbackActive){log("CALLBACK already running");return;}callbackActive=true;callbackEvents=0;parsedFrames=0;badChecksums=0;registerSucceeded=false;previous.clear(); synchronized(statsLock){phaseCounts.clear();} phase="БЕЗ ПОЗНАЧКИ";phaseStartedMs=0;phaseSequence=0;}
+        log("=== CAN LIVE: реєстрація (90 с) ===");
         try{
             Class<?> sm=Class.forName("android.os.ServiceManager");
             Method get=sm.getDeclaredMethod("getService",String.class);
@@ -143,14 +150,14 @@ public class MainActivity extends Activity {
                 log("REGISTER transact result="+ok);
                 if(!ok)throw new IOException("REGISTER transact повернув false");
                 reply.readException();
-                registerSucceeded=true;log("REGISTER OK — очікуємо onResult(byte[],int) до 60 секунд");
-                mainHandler.postDelayed(autoStop,60000);
+                registerSucceeded=true;log("REGISTER OK — очікуємо onResult(byte[],int) до 90 секунд");
+                mainHandler.postDelayed(autoStop,90000);
             }finally{data.recycle();reply.recycle();}
         }catch(Throwable e){log("CALLBACK ERROR "+describe(e));stopCallback();}
     }
     private String hex(byte[] bytes,int limit){if(bytes==null)return "null";StringBuilder sb=new StringBuilder();for(int i=0;i<Math.min(bytes.length,limit);i++){if(i>0)sb.append(' ');sb.append(String.format(Locale.US,"%02X",bytes[i]&255));}if(bytes.length>limit)sb.append(" ...");return sb.toString();}
     private void stopCallback(){
-        mainHandler.removeCallbacks(autoStop);
+        mainHandler.removeCallbacks(autoStop);mainHandler.removeCallbacks(finishPhase);finishCurrentPhase();
         final IBinder remote;final Binder local;final int unreg;
         synchronized(lock){remote=remoteCanbus;local=callbackBinder;unreg=unregisterCode;remoteCanbus=null;callbackBinder=null;unregisterCode=-1;callbackActive=false;}
         if(local==null){log("CALLBACK не активний. Отримано="+callbackEvents);return;}
@@ -162,12 +169,51 @@ public class MainActivity extends Activity {
                     if(ok)reply.readException();log("UNREGISTER result="+ok);
                 }finally{data.recycle();reply.recycle();}}
             }catch(Throwable e){log("UNREGISTER ERROR "+describe(e));}
-            log("CAN CALLBACK STOP. Подій="+callbackEvents+" frames="+parsedFrames+" badChecksums="+badChecksums);
+            showSummary();log("CAN CALLBACK STOP. Подій="+callbackEvents+" frames="+parsedFrames+" badChecksums="+badChecksums);
         }}).start();
     }
     private void mark(String name){
+        if(!callbackActive){log("МАРКЕР: спочатку запусти прийом");return;}
+        finishCurrentPhase();
         phase=name;
-        log("=== MARK "+name+" === events="+callbackEvents+" frames="+parsedFrames);
+        phaseStartedMs=android.os.SystemClock.elapsedRealtime();
+        final int sequence=++phaseSequence;
+        log("=== MARK "+name+" #"+sequence+" === events="+callbackEvents+" frames="+parsedFrames);
+        log("PHASE #"+sequence+" 0-3 с: перехід, 3-12 с: стабільні дані. Виконай дію одразу після натискання.");
+        mainHandler.removeCallbacks(finishPhase);
+        mainHandler.postDelayed(finishPhase,SETTLE_MS+SAMPLE_MS);
+    }
+    private void finishCurrentPhase(){
+        String name=phase;
+        if("БЕЗ ПОЗНАЧКИ".equals(name))return;
+        phase="БЕЗ ПОЗНАЧКИ";
+        long elapsed=android.os.SystemClock.elapsedRealtime()-phaseStartedMs;
+        log("=== PHASE END "+name+" durationMs="+elapsed+" ===");
+        showSummary();
+    }
+    private void showSummary(){
+        log("=== СТАТИСТИКА СТАБІЛЬНИХ ФАЗ (3-12 с після MARK) ===");
+        synchronized(statsLock){
+            for(Map.Entry<String,Map<String,Integer>> phaseEntry:phaseCounts.entrySet()){
+                log("PHASE_STATS "+phaseEntry.getKey());
+                for(Map.Entry<String,Integer> value:phaseEntry.getValue().entrySet())
+                    log("  CMD_PAYLOAD "+value.getKey()+" count="+value.getValue());
+            }
+        }
+        log("=== КІНЕЦЬ СТАТИСТИКИ ===");
+    }
+    private void addPhaseSample(String cmd,byte[] bytes,int start,int frameLen){
+        String name=phase;
+        if("БЕЗ ПОЗНАЧКИ".equals(name))return;
+        long age=android.os.SystemClock.elapsedRealtime()-phaseStartedMs;
+        if(age<SETTLE_MS || age>SETTLE_MS+SAMPLE_MS)return;
+        // Group by command and payload; do not include checksum (derived field).
+        String key=cmd+" "+hexRange(bytes,start+3,frameLen-4);
+        synchronized(statsLock){
+            Map<String,Integer> counts=phaseCounts.get(name);
+            if(counts==null){counts=new LinkedHashMap<String,Integer>();phaseCounts.put(name,counts);}
+            Integer n=counts.get(key);counts.put(key,n==null?1:n+1);
+        }
     }
     private void decodeFrames(byte[] bytes,int len,int event){
         if(bytes==null || len<4)return;
@@ -189,6 +235,7 @@ public class MainActivity extends Activity {
             String data=hexRange(bytes,offset,frameLen);
             String prev=previous.put(key,data);
             boolean changed=prev==null||!prev.equals(data);
+            if(valid)addPhaseSample(key,bytes,offset,frameLen);
             log("FRAME #"+parsedFrames+" phase="+phase+" cmd="+key+" payload="+payload+" sum="+String.format(Locale.US,"%02X",sum)+" check="+(valid?"OK":"UNKNOWN")+" changed="+changed+" HEX="+data);
             offset+=frameLen;
         }
