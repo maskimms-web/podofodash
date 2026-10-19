@@ -87,40 +87,41 @@ public class MainActivity extends Activity {
     private IBinder remoteCanbus;
     private Binder callbackBinder;
     private int unregisterCode = -1;
-    private final Runnable autoStop = new Runnable(){public void run(){stopCallback();}};
+    private volatile boolean appVisible=false;
+    private volatile boolean callbackStarting=false;
 
 
     @Override public void onCreate(Bundle b) {
         super.onCreate(b);
-        LinearLayout root = new LinearLayout(this); root.setOrientation(1); root.setBackgroundColor(Color.rgb(7,12,22));
+        LinearLayout root = new LinearLayout(this); root.setOrientation(1); root.setBackgroundColor(Color.rgb(8,5,7));
         LinearLayout toolbar=new LinearLayout(this);toolbar.setOrientation(LinearLayout.HORIZONTAL);toolbar.setPadding(8,2,8,2);
         root.addView(toolbar,new LinearLayout.LayoutParams(-1,43));
-        addSmallButton(toolbar,"▶ CAN 90 с",new View.OnClickListener(){public void onClick(View v){confirmCallback();}});
-        addSmallButton(toolbar,"■ СТОП",new View.OnClickListener(){public void onClick(View v){stopCallback();}});
+        addSmallButton(toolbar,"● CAN АВТО",new View.OnClickListener(){public void onClick(View v){showCanStatus();}});
+        addSmallButton(toolbar,"ВИХІД",new View.OnClickListener(){public void onClick(View v){finish();}});
         addSmallButton(toolbar,"ДІАГНОСТИКА",new View.OnClickListener(){public void onClick(View v){diagnosticsVisible=!diagnosticsVisible;diagnosticScroll.setVisibility(diagnosticsVisible?View.VISIBLE:View.GONE);dashboard.setVisibility(diagnosticsVisible?View.GONE:View.VISIBLE);}});
         dashboard=new DashboardView(this);root.addView(dashboard,new LinearLayout.LayoutParams(-1,0,1));
-        ScrollView diagScroll=new ScrollView(this);diagnosticScroll=diagScroll;diagScroll.setVisibility(View.GONE);diagnosticPanel=new LinearLayout(this);diagnosticPanel.setOrientation(1);diagnosticPanel.setPadding(10,7,10,7);diagnosticPanel.setBackgroundColor(Color.rgb(14,21,30));diagScroll.addView(diagnosticPanel);
+        ScrollView diagScroll=new ScrollView(this);diagnosticScroll=diagScroll;diagScroll.setVisibility(View.GONE);diagnosticPanel=new LinearLayout(this);diagnosticPanel.setOrientation(1);diagnosticPanel.setPadding(10,7,10,7);diagnosticPanel.setBackgroundColor(Color.rgb(19,10,13));diagScroll.addView(diagnosticPanel);
         root.addView(diagScroll,new LinearLayout.LayoutParams(-1,0,1));
         // Diagnostic view is accessible with the toolbar button; the dashboard is the default.
         final LinearLayout oldRoot=diagnosticPanel;
 
-        TextView title = new TextView(this); title.setText("GOLF R CAN v1.5  |  RAISE-PQ ANALYZER"); title.setTextColor(Color.WHITE); title.setTextSize(18); oldRoot.addView(title);
-        TextView sub = new TextView(this); sub.setText("8227L • SDK " + Build.VERSION.SDK_INT + " • 90 с автостоп • без CAN TX"); sub.setTextColor(Color.LTGRAY); sub.setTextSize(12); oldRoot.addView(sub);
+        TextView title = new TextView(this); title.setText("GOLF R CAN v1.5.1  |  RAISE-PQ ANALYZER"); title.setTextColor(Color.WHITE); title.setTextSize(18); oldRoot.addView(title);
+        TextView sub = new TextView(this); sub.setText("8227L • SDK " + Build.VERSION.SDK_INT + " • автостарт / стоп при виході • без CAN TX"); sub.setTextColor(Color.LTGRAY); sub.setTextSize(12); oldRoot.addView(sub);
         LinearLayout indicators=new LinearLayout(this);indicators.setOrientation(LinearLayout.HORIZONTAL);
         oldRoot.addView(indicators,new LinearLayout.LayoutParams(-1,104));
         doorView=indicator(indicators,"ДВЕРІ\nНЕВІДОМО",Color.rgb(65,75,88));
         ignitionView=indicator(indicators,"ЗАПАЛЮВАННЯ\nНЕВІДОМО",Color.rgb(65,75,88));
         evidenceView=new TextView(this);evidenceView.setText("Двері: основний сигнал 0x24. 0x41 лише діагностика. Без CAN TX.");
         evidenceView.setTextColor(Color.LTGRAY);evidenceView.setTextSize(11);oldRoot.addView(evidenceView);
-        telemetryView=new TextView(this);telemetryView.setTextColor(Color.rgb(146,207,255));telemetryView.setTextSize(15);telemetryView.setPadding(10,10,10,10);oldRoot.addView(telemetryView);
+        telemetryView=new TextView(this);telemetryView.setTextColor(Color.rgb(255,136,146));telemetryView.setTextSize(15);telemetryView.setPadding(10,10,10,10);oldRoot.addView(telemetryView);
         LinearLayout telemetryButtons=buttonRow(oldRoot);
         addSmallButton(telemetryButtons,"КАТАЛОГ CMD",new View.OnClickListener(){public void onClick(View v){showCommandCatalog();}});
         addSmallButton(telemetryButtons,"0x41 HEX",new View.OnClickListener(){public void onClick(View v){showTelemetryHex();}});
         addSmallButton(telemetryButtons,"ПОЗНАЧКА: 1500 RPM",new View.OnClickListener(){public void onClick(View v){mark("RPM 1500 (зі штатного тахометра)");}});
         addSmallButton(telemetryButtons,"ПОЗНАЧКА: 2000 RPM",new View.OnClickListener(){public void onClick(View v){mark("RPM 2000 (зі штатного тахометра)");}});
         LinearLayout line1 = buttonRow(oldRoot);
-        addSmallButton(line1,"▶ ПРИЙОМ 90 с",new View.OnClickListener(){public void onClick(View v){confirmCallback();}});
-        addSmallButton(line1,"■ СТОП",new View.OnClickListener(){public void onClick(View v){stopCallback();}});
+        addSmallButton(line1,"● CAN АВТО",new View.OnClickListener(){public void onClick(View v){showCanStatus();}});
+        addSmallButton(line1,"ВИХІД",new View.OnClickListener(){public void onClick(View v){finish();}});
         addSmallButton(line1,"USB ПАПКА",new View.OnClickListener(){public void onClick(View v){chooseUsb();}});
         addSmallButton(line1,"USB ЗВІТ",new View.OnClickListener(){public void onClick(View v){new Thread(new Runnable(){public void run(){saveToUsb();}}).start();}});
         LinearLayout line2 = buttonRow(oldRoot);
@@ -135,10 +136,10 @@ public class MainActivity extends Activity {
         addSmallButton(line3,"ПІДСУМОК",new View.OnClickListener(){public void onClick(View v){showSummary();}});
         logView = new TextView(this); logView.setTextColor(Color.rgb(196,236,208)); logView.setTextSize(11); logView.setPadding(8,6,8,6);
         ScrollView sc = new ScrollView(this); sc.setFillViewport(false); sc.addView(logView); oldRoot.addView(sc,new LinearLayout.LayoutParams(-1,320)); setContentView(root);
-        report = new File(getExternalFilesDir(null),"GolfR-CAN-v1.5-report.txt");
+        report = new File(getExternalFilesDir(null),"GolfR-CAN-v1.5.1-report.txt");
         String saved=getPreferences(0).getString("usb_tree",null); if(saved!=null){usbTree=Uri.parse(saved);}
         mainHandler.post(refreshSignals);
-        log("Старт v1.5. Raise-PQ decoder candidates. Немає CAN TX; callback тільки за підтвердженням.");
+        log("Старт v1.5.1. Автоматичний CAN при відкритому застосунку; без CAN TX.");
         log("Папка копій: " + getExternalFilesDir(null));
     }
 
@@ -146,8 +147,8 @@ public class MainActivity extends Activity {
     // All telemetry values originate from live 0x41/02 candidate decoding; no sample values.
     private final class DashboardView extends View {
         private final Paint p=new Paint(3);
-        private final int bg=Color.rgb(3,9,19),blue=Color.rgb(20,118,249),bright=Color.rgb(46,164,255);
-        private final int white=Color.rgb(238,246,255),muted=Color.rgb(136,167,200),red=Color.rgb(251,61,79),green=Color.rgb(36,211,129);
+        private final int bg=Color.rgb(8,5,7),blue=Color.rgb(201,14,35),bright=Color.rgb(255,43,65);
+        private final int white=Color.rgb(238,246,255),muted=Color.rgb(174,153,160),red=Color.rgb(251,61,79),green=Color.rgb(36,211,129);
         DashboardView(Context c){super(c);setLayerType(View.LAYER_TYPE_SOFTWARE,null);}
         private void fill(int color){p.setColor(color);p.setStyle(Paint.Style.FILL);p.setStrokeWidth(1);p.setShader(null);}
         private void text(Canvas c,String s,float x,float y,float size,int color,boolean bold){fill(color);p.setTypeface(android.graphics.Typeface.create("sans-serif",bold?1:0));p.setTextSize(size);p.setTextAlign(Paint.Align.CENTER);c.drawText(s,x,y,p);}
@@ -157,7 +158,7 @@ public class MainActivity extends Activity {
         private void ring(Canvas c,float x,float y,float radius,float start,float sweep,int color,float width){fill(color);p.setStyle(Paint.Style.STROKE);p.setStrokeCap(Paint.Cap.ROUND);p.setStrokeWidth(width);c.drawArc(new RectF(x-radius,y-radius,x+radius,y+radius),start,sweep,false,p);p.setStyle(Paint.Style.FILL);}
         private void dial(Canvas c,float x,float y,boolean rpm,boolean fresh){
             int max=rpm?8:260;float value=fresh?(rpm?rpmCandidate/1000f:speedCandidate):0f;
-            ring(c,x,y,137,133,274,Color.rgb(15,40,75),12);ring(c,x,y,137,133,274,blue,5);
+            ring(c,x,y,137,133,274,Color.rgb(69,15,24),12);ring(c,x,y,137,133,274,blue,5);
             if(fresh)ring(c,x,y,137,133,Math.max(0,Math.min(274,value/max*274)),bright,9);
             for(int i=0;i<=12;i++){double angle=Math.toRadians(133+i*274.0/12);float cs=(float)Math.cos(angle),sn=(float)Math.sin(angle);line(c,x+cs*112,y+sn*112,x+cs*(i%3==0?127:121),y+sn*(i%3==0?127:121),i%3==0?white:muted,i%3==0?3:1);}
             for(int i=0;i<=4;i++){double angle=Math.toRadians(133+i*274.0/4);float cs=(float)Math.cos(angle),sn=(float)Math.sin(angle);text(c,String.valueOf(rpm?i*2:i*65),x+cs*91,y+sn*91+6,19,white,true);}
@@ -167,22 +168,22 @@ public class MainActivity extends Activity {
             text(c,"0x41 / 0x02  •  КАНДИДАТ",x,y+100,10,muted,false);
         }
         private void tile(Canvas c,float x,float y,float w,String label,String value,String unit,int accent){
-            rect(c,x,y,w,68,Color.rgb(10,23,43),10);fill(Color.rgb(24,68,113));p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1);c.drawRoundRect(new RectF(x,y,x+w,y+68),10,10,p);p.setStyle(Paint.Style.FILL);
+            rect(c,x,y,w,68,Color.rgb(22,10,13),10);fill(Color.rgb(116,26,39));p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1);c.drawRoundRect(new RectF(x,y,x+w,y+68),10,10,p);p.setStyle(Paint.Style.FILL);
             rect(c,x+10,y+13,3,40,accent,2);left(c,label,x+22,y+23,13,muted,true);left(c,value+(unit.length()>0?" "+unit:""),x+22,y+52,23,white,true);
         }
         @Override protected void onDraw(Canvas real){super.onDraw(real);real.save();real.scale(getWidth()/1024f,getHeight()/510f);Canvas c=real;c.drawColor(bg);
-            rect(c,0,0,1024,46,Color.rgb(6,18,36),0);line(c,0,46,1024,46,blue,2);
+            rect(c,0,0,1024,46,Color.rgb(22,8,12),0);line(c,0,46,1024,46,blue,2);
             text(c,"GOLF",466,34,31,white,true);text(c,"R",553,35,39,bright,true);
             left(c,"CAN  •  RAISE-PQ",20,30,16,muted,true);
             text(c,callbackActive&&registerSucceeded?"● CAN ОНЛАЙН":"○ CAN ВИМКНЕНО",867,30,15,callbackActive&&registerSucceeded?green:muted,true);
             boolean fresh=telemetryFresh();dial(c,172,197,true,fresh);dial(c,853,197,false,fresh);
-            rect(c,337,63,349,272,Color.rgb(8,23,44),18);
+            rect(c,337,63,349,272,Color.rgb(22,10,14),18);
             // Vector top-down Golf silhouette; driver-side accent represents observed 0x24 state only.
-            rect(c,456,91,110,221,Color.rgb(28,49,73),30);
-            rect(c,465,100,92,203,Color.rgb(93,123,153),26);
-            rect(c,472,112,78,43,Color.rgb(16,37,63),15);
-            rect(c,472,164,78,85,Color.rgb(10,27,47),15);
-            rect(c,472,259,78,34,Color.rgb(16,37,63),12);
+            rect(c,456,91,110,221,Color.rgb(59,39,45),30);
+            rect(c,465,100,92,203,Color.rgb(121,111,116),26);
+            rect(c,472,112,78,43,Color.rgb(35,24,28),15);
+            rect(c,472,164,78,85,Color.rgb(28,18,22),15);
+            rect(c,472,259,78,34,Color.rgb(35,24,28),12);
             rect(c,448,143,13,47,Color.rgb(4,9,17),4);rect(c,561,143,13,47,Color.rgb(4,9,17),4);
             rect(c,448,231,13,45,Color.rgb(4,9,17),4);rect(c,561,231,13,45,Color.rgb(4,9,17),4);
             long now=android.os.SystemClock.elapsedRealtime();boolean doorFresh=callbackActive&&registerSucceeded&&door24At>0&&now-door24At<SIGNAL_TTL_MS;
@@ -198,7 +199,7 @@ public class MainActivity extends Activity {
             tile(c,268,368,239,"ЗОВНІШНЯ ТЕМП.  •  ?",temp,fresh?"°C":"",bright);
             tile(c,518,368,239,"НАПРУГА  •  ?",volts,fresh?"В":"",bright);
             tile(c,768,368,238,"ПРОБІГ  •  ?",odo,fresh?"км":"",bright);
-            rect(c,18,447,988,47,Color.rgb(9,28,53),10);
+            rect(c,18,447,988,47,Color.rgb(35,12,18),10);
             text(c,"ДІАГНОСТИКА CAN",150,476,17,white,true);
             text(c,"СИРИЙ ПОТІК / КАТАЛОГ",404,476,16,white,true);
             text(c,"0x41 / 0x02 HEX",680,476,16,white,true);
@@ -227,18 +228,25 @@ public class MainActivity extends Activity {
         Button b=new Button(this);b.setText(text);b.setTextSize(10);b.setAllCaps(false);b.setMinHeight(0);b.setMinimumHeight(0);b.setPadding(2,0,2,0);
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,44,1);lp.setMargins(2,2,2,2);row.addView(b,lp);b.setOnClickListener(listener);
     }
-    private void confirmCallback(){
-        new AlertDialog.Builder(this).setTitle("CAN Callback — експеримент")
-          .setMessage("CAN callback може вплинути на штатну CAN-програму. Лише на припаркованому авто, 90 секунд, автоматична відписка. Не використовувати під час руху. Продовжити?")
-          .setNegativeButton("Скасувати",null)
-          .setPositiveButton("Запустити 90 с",(d,w)->new Thread(new Runnable(){public void run(){startCallback();}}).start()).show();
+    @Override protected void onResume(){
+        super.onResume();appVisible=true;
+        new Thread(new Runnable(){public void run(){startCallback();}},"golf-can-start").start();
+    }
+    @Override protected void onStop(){
+        // No background CAN listener: unregister as soon as the activity leaves the screen.
+        appVisible=false;stopCallback();super.onStop();
+    }
+    private void showCanStatus(){
+        new AlertDialog.Builder(this).setTitle("CAN — автоматичний прийом")
+          .setMessage("CAN підключається автоматично при відкритті застосунку та відключається, коли він іде у фон або закривається. Без передачі CAN-команд.\n\nСтан: "+(registerSucceeded?"ПІДКЛЮЧЕНО":callbackStarting?"ПІДКЛЮЧЕННЯ...":"НЕ ПІДКЛЮЧЕНО"))
+          .setPositiveButton("OK",null).show();
     }
     private int transactionCode(Class<?> stub,String fieldName) throws Exception {
         java.lang.reflect.Field f=stub.getDeclaredField(fieldName);f.setAccessible(true);return f.getInt(null);
     }
     private void startCallback(){
-        synchronized(lock){if(callbackActive){log("CALLBACK already running");return;}callbackActive=true;resetSignals();callbackEvents=0;parsedFrames=0;badChecksums=0;registerSucceeded=false;previous.clear(); synchronized(statsLock){phaseCounts.clear();} phase="БЕЗ ПОЗНАЧКИ";phaseStartedMs=0;phaseSequence=0;}
-        log("=== CAN LIVE: реєстрація (90 с) ===");
+        synchronized(lock){if(!appVisible || callbackActive || callbackStarting)return;callbackStarting=true;callbackActive=true;resetSignals();callbackEvents=0;parsedFrames=0;badChecksums=0;registerSucceeded=false;previous.clear(); synchronized(statsLock){phaseCounts.clear();} phase="БЕЗ ПОЗНАЧКИ";phaseStartedMs=0;phaseSequence=0;}
+        log("=== CAN LIVE: автоматична реєстрація ===");
         try{
             Class<?> sm=Class.forName("android.os.ServiceManager");
             Method get=sm.getDeclaredMethod("getService",String.class);
@@ -260,11 +268,11 @@ public class MainActivity extends Activity {
                         byte[] bytes=data.createByteArray();int type=data.readInt();
                         if(callbackActive){
                             int n=++callbackEvents;
-                            if(n<=2500){
+                            {
                                 int usable=(bytes==null?0:Math.min(Math.max(type,0),bytes.length));
-                                log("CAN_RX #"+n+" PHASE="+phase+" type="+type+" buffer="+(bytes==null?-1:bytes.length)+" payload="+usable+" HEX="+hex(bytes,usable));
+                                if(n<=200 || n%100==0)log("CAN_RX #"+n+" PHASE="+phase+" type="+type+" buffer="+(bytes==null?-1:bytes.length)+" payload="+usable+" HEX="+hex(bytes,usable));
                                 decodeFrames(bytes,usable,n);
-                            } else if(n==2501){log("CAN_RX LIMIT 2500: наступні пакети не записуються");}
+                            }
                         }
                         if(reply!=null)reply.writeNoException();return true;
                     }
@@ -272,24 +280,27 @@ public class MainActivity extends Activity {
                 }
             };
             local.attachInterface(null,"android.os.ICanbusInterface");
-            synchronized(lock){remoteCanbus=remote;callbackBinder=local;unregisterCode=unreg;}
-            Parcel data=Parcel.obtain(),reply=Parcel.obtain();
-            try{
-                data.writeInterfaceToken(descriptor);data.writeStrongBinder(local);
-                boolean ok=remote.transact(reg,data,reply,0);
-                log("REGISTER transact result="+ok);
-                if(!ok)throw new IOException("REGISTER transact повернув false");
-                reply.readException();
-                registerSucceeded=true;log("REGISTER OK — очікуємо onResult(byte[],int) до 90 секунд");
-                mainHandler.postDelayed(autoStop,90000);
-            }finally{data.recycle();reply.recycle();}
+            synchronized(lock){
+                if(!appVisible){callbackActive=false;callbackStarting=false;return;}
+                remoteCanbus=remote;callbackBinder=local;unregisterCode=unreg;
+                Parcel data=Parcel.obtain(),reply=Parcel.obtain();
+                try{
+                    data.writeInterfaceToken(descriptor);data.writeStrongBinder(local);
+                    boolean ok=remote.transact(reg,data,reply,0);
+                    if(!ok)throw new IOException("REGISTER transact повернув false");
+                    reply.readException();
+                    registerSucceeded=true;callbackStarting=false;
+                }finally{data.recycle();reply.recycle();}
+            }
+            log("REGISTER OK — прийом поки застосунок на екрані");
+            if(!appVisible)stopCallback();
         }catch(Throwable e){log("CALLBACK ERROR "+describe(e));stopCallback();}
     }
     private String hex(byte[] bytes,int limit){if(bytes==null)return "null";StringBuilder sb=new StringBuilder();for(int i=0;i<Math.min(bytes.length,limit);i++){if(i>0)sb.append(' ');sb.append(String.format(Locale.US,"%02X",bytes[i]&255));}if(bytes.length>limit)sb.append(" ...");return sb.toString();}
     private void stopCallback(){
-        mainHandler.removeCallbacks(autoStop);mainHandler.removeCallbacks(finishPhase);finishCurrentPhase();
+        mainHandler.removeCallbacks(finishPhase);finishCurrentPhase();
         final IBinder remote;final Binder local;final int unreg;
-        synchronized(lock){remote=remoteCanbus;local=callbackBinder;unreg=unregisterCode;remoteCanbus=null;callbackBinder=null;unregisterCode=-1;callbackActive=false;}
+        synchronized(lock){remote=remoteCanbus;local=callbackBinder;unreg=unregisterCode;remoteCanbus=null;callbackBinder=null;unregisterCode=-1;callbackActive=false;callbackStarting=false;registerSucceeded=false;}
         updateSignalDisplay();
         if(local==null){log("CALLBACK не активний. Отримано="+callbackEvents);return;}
         new Thread(new Runnable(){public void run(){
@@ -385,7 +396,7 @@ public class MainActivity extends Activity {
                 synchronized(statsLock){commandCounts.put(key,commandCounts.containsKey(key)?commandCounts.get(key)+1:1);lastCommandHex.put(key,data);if(changed)changedCounts.put(key,changedCounts.containsKey(key)?changedCounts.get(key)+1:1);}
                 addPhaseSample(key,all,offset,frameLen);
                 analyzeSignals(all,offset,frameLen);
-                log("FRAME #"+parsedFrames+" phase="+phase+" cmd="+key+" check=OK changed="+changed+" HEX="+data);
+                if(parsedFrames<=300 || parsedFrames%100==0 || changed)log("FRAME #"+parsedFrames+" phase="+phase+" cmd="+key+" check=OK changed="+changed+" HEX="+data);
                 offset+=frameLen;
             }
             rxStream.reset();
@@ -595,7 +606,7 @@ public class MainActivity extends Activity {
         catch(Exception e){receiver=null;log("ПОМИЛКА приймача: "+e);}
     }
     private void stopListening(){if(receiver!=null){try{unregisterReceiver(receiver);}catch(Exception ignored){}receiver=null;log("Прослуховування зупинено. Подій: "+eventCount);}}
-    @Override protected void onDestroy(){mainHandler.removeCallbacks(refreshSignals);stopCallback();stopListening();super.onDestroy();}
+    @Override protected void onDestroy(){appVisible=false;mainHandler.removeCallbacks(refreshSignals);stopCallback();stopListening();super.onDestroy();}
     private void addButton(LinearLayout root,String text,View.OnClickListener click){Button b=new Button(this);b.setText(text);root.addView(b,new LinearLayout.LayoutParams(-1,-2));b.setOnClickListener(click);}
     private void log(String s){final String line="["+new SimpleDateFormat("HH:mm:ss",Locale.US).format(new Date())+"] "+s+"\n";synchronized(lock){logs.append(line); if(report!=null){try(FileOutputStream f=new FileOutputStream(report,true)){f.write(line.getBytes("UTF-8"));}catch(Exception ignored){}}}runOnUiThread(new Runnable(){public void run(){if(logView!=null){logView.append(line);}}});}
     private void inspect(boolean copy){

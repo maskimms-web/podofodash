@@ -14,3 +14,11 @@ Push ZIP contents to a GitHub repository → Actions → Build → download APK 
 
 ## Testing
 Park the vehicle and secure the parking brake. Start 90s and compare RPM, voltage, odometer with stock gauges; send exported report for verification. No on-road interaction with the UI.
+
+
+## v1.5.1: CAN lifecycle and black/red theme
+- Automatic CAN Binder callback registration in Activity.onResume; unregister in onStop/onDestroy. No 90-second limit. No background tracking.
+- Long running decoder no longer stops parsing after 2500 callback events. Logging is throttled, decoding is not.
+- Red/black dashboard. Candidate 0x41/02 telemetry mapping retained; unknown values shown as dashes.
+- Do not use while driving; check that stock CAN apps remain operational. Some firmware may support only one callback.
+- Source build not locally verified.
