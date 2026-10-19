@@ -1,20 +1,21 @@
-# Golf CAN Diagnostic v0.9 — Binder Callback
+# Golf CAN Live Decoder v1.0 — Podofo 8227L / VW Golf 5
 
-Android SDK 27, Podofo / 8227L, CAN Pro Raise-PQ. GitHub Actions builds APK.
+Build with GitHub Actions: Actions → Build Golf CAN Live Decoder v1.0 → Run workflow → artifact GolfCanLiveDecoder-v1.0-APK → app-debug.apk.
 
-## Screen 1024×600
-Two compact rows of three buttons, large scrollable log area.
+1024×600 layout: 3 rows of 4 compact buttons; log scrolls below. Android minSdk 23, targetSdk 27.
 
-## How to test (vehicle parked)
-1. Build via Actions → Build Golf CAN Diagnostic v0.9 → Run workflow; download artifact `GolfCanDiagnostic-v0.9-APK`.
-2. Install `app-debug.apk` on the head unit.
-3. Press `1 ПОВНА ПЕРЕВІРКА` (metadata only) and wait for `КІНЕЦЬ`.
-4. With vehicle stationary, press `2 CAN CALLBACK`, read warning, confirm. Observe 30 seconds. The app attempts registration of `ICanbusInterface.onResult(byte[],int)` and automatically attempts unregister after 30 seconds.
-5. Press `СТОП` if anything unusual occurs. If CAN functions are disrupted, stop test and restart the head unit.
-6. Press `USB: ВИБРАТИ`, select flash drive, then `USB: ЗБЕРЕГТИ`; send `GolfCanDiagnostic-v0.9-report.txt`.
+## Test (parked vehicle only)
+1. Install APK. Press USB ПАПКА and select USB stick.
+2. Press ▶ ПРИЙОМ 60 с and confirm. Start with all doors closed, ignition off.
+3. Press ДВЕРІ ВІДКР. immediately before opening driver's door, then ДВЕРІ ЗАКР. before closing it.
+4. Press ЗАПАЛ. ON before turning ignition on; ЗАПАЛ. OFF before turning it off.
+5. Optionally, with the vehicle stationary and in neutral, press МАРКЕР: ХОЛОСТІ and then МАРКЕР: ГАЗ for a brief change of RPM. Do not do this if unsafe.
+6. Wait for auto-stop and UNREGISTER result=true, or press ■ СТОП.
+7. Press USB ЗВІТ and share GolfCanLiveDecoder-v1.0-report.txt.
 
-## Caution
-`setCanbusInterface` is a system Binder registration operation. It may replace or interfere with a stock callback; this is **not** proven safe on this firmware. Do not run while driving. Registration may fail due to permissions. No `setValue`, `setBCS`, CAN transmission or UART access is attempted. Registration and removal are Binder transact calls. No root.
+The app sends NO CAN commands; it registers and removes a Binder callback. Registration may still interfere with the stock CAN service. Stop immediately if stock functionality changes, and reboot the head unit if necessary. No testing while driving.
 
-## Implementation
-Uses the actual `TRANSACTION_setCanbusInterface`, `TRANSACTION_removeCanbusInterface` and `TRANSACTION_onResult` constants reflected from device framework rather than hardcoded transaction numbers. Logs callback payloads in HEX (up to 96 bytes, first 150 messages).
+## Parsing
+onResult(byte[],int): int is interpreted as the count of meaningful bytes (v0.9 observed 64-byte padded buffers). 2E CMD LEN PAYLOAD CHECKSUM frames; observed checksum makes the sum of all frame bytes mod 256 equal 0x2D. The decoder records raw callback bytes, frames, phase markers and changes; it does NOT assert which byte is RPM or door state.
+
+This ZIP is source only; APK is built by GitHub Actions. The build has not been run locally.

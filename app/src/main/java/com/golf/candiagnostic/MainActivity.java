@@ -45,6 +45,11 @@ public class MainActivity extends Activity {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private volatile boolean callbackActive = false;
     private volatile int callbackEvents = 0;
+    private volatile int parsedFrames = 0;
+    private volatile int badChecksums = 0;
+    private volatile String phase = "БЕЗ ПОЗНАЧКИ";
+    private final Map<String,String> previous = new HashMap<String,String>();
+    private volatile boolean registerSucceeded = false;
     private IBinder remoteCanbus;
     private Binder callbackBinder;
     private int unregisterCode = -1;
@@ -54,42 +59,49 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle b) {
         super.onCreate(b);
         LinearLayout root = new LinearLayout(this); root.setOrientation(1); root.setPadding(10,7,10,7); root.setBackgroundColor(Color.rgb(14,21,30));
-        TextView title = new TextView(this); title.setText("GOLF CAN v0.9  |  BINDER CALLBACK"); title.setTextColor(Color.WHITE); title.setTextSize(18); root.addView(title);
-        TextView sub = new TextView(this); sub.setText("8227L • SDK " + Build.VERSION.SDK_INT + " • 30 с автостоп • без CAN TX"); sub.setTextColor(Color.LTGRAY); sub.setTextSize(12); root.addView(sub);
+        TextView title = new TextView(this); title.setText("GOLF CAN v1.0  |  LIVE DECODER"); title.setTextColor(Color.WHITE); title.setTextSize(18); root.addView(title);
+        TextView sub = new TextView(this); sub.setText("8227L • SDK " + Build.VERSION.SDK_INT + " • 60 с автостоп • без CAN TX"); sub.setTextColor(Color.LTGRAY); sub.setTextSize(12); root.addView(sub);
         LinearLayout line1 = buttonRow(root);
-        addSmallButton(line1,"1  ПОВНА ПЕРЕВІРКА",new View.OnClickListener(){public void onClick(View v){new Thread(new Runnable(){public void run(){runAll();}}).start();}});
-        addSmallButton(line1,"2  CAN CALLBACK",new View.OnClickListener(){public void onClick(View v){confirmCallback();}});
-        addSmallButton(line1,"СТОП",new View.OnClickListener(){public void onClick(View v){stopCallback();stopListening();}});
+        addSmallButton(line1,"▶ ПРИЙОМ 60 с",new View.OnClickListener(){public void onClick(View v){confirmCallback();}});
+        addSmallButton(line1,"■ СТОП",new View.OnClickListener(){public void onClick(View v){stopCallback();}});
+        addSmallButton(line1,"USB ПАПКА",new View.OnClickListener(){public void onClick(View v){chooseUsb();}});
+        addSmallButton(line1,"USB ЗВІТ",new View.OnClickListener(){public void onClick(View v){new Thread(new Runnable(){public void run(){saveToUsb();}}).start();}});
         LinearLayout line2 = buttonRow(root);
-        addSmallButton(line2,"USB: ВИБРАТИ",new View.OnClickListener(){public void onClick(View v){chooseUsb();}});
-        addSmallButton(line2,"USB: ЗБЕРЕГТИ",new View.OnClickListener(){public void onClick(View v){new Thread(new Runnable(){public void run(){saveToUsb();}}).start();}});
-        addSmallButton(line2,"BROADCAST",new View.OnClickListener(){public void onClick(View v){startListening();}});
-        logView = new TextView(this); logView.setTextColor(Color.rgb(196,236,208)); logView.setTextSize(12); logView.setPadding(8,6,8,6);
+        addSmallButton(line2,"ДВЕРІ ВІДКР.",new View.OnClickListener(){public void onClick(View v){mark("ДВЕРІ ВІДКРИТІ");}});
+        addSmallButton(line2,"ДВЕРІ ЗАКР.",new View.OnClickListener(){public void onClick(View v){mark("ДВЕРІ ЗАКРИТІ");}});
+        addSmallButton(line2,"ЗАПАЛ. ON",new View.OnClickListener(){public void onClick(View v){mark("ЗАПАЛЮВАННЯ ON");}});
+        addSmallButton(line2,"ЗАПАЛ. OFF",new View.OnClickListener(){public void onClick(View v){mark("ЗАПАЛЮВАННЯ OFF");}});
+        LinearLayout line3 = buttonRow(root);
+        addSmallButton(line3,"МАРКЕР: ХОЛОСТІ",new View.OnClickListener(){public void onClick(View v){mark("ДВИГУН ХОЛОСТІ");}});
+        addSmallButton(line3,"МАРКЕР: ГАЗ",new View.OnClickListener(){public void onClick(View v){mark("ОБЕРТИ ПІДВИЩЕНО");}});
+        addSmallButton(line3,"ДІАГНОСТИКА",new View.OnClickListener(){public void onClick(View v){new Thread(new Runnable(){public void run(){runAll();}}).start();}});
+        addSmallButton(line3,"СКИНУТИ МАРКЕР",new View.OnClickListener(){public void onClick(View v){mark("БЕЗ ПОЗНАЧКИ");}});
+        logView = new TextView(this); logView.setTextColor(Color.rgb(196,236,208)); logView.setTextSize(11); logView.setPadding(8,6,8,6);
         ScrollView sc = new ScrollView(this); sc.setFillViewport(false); sc.addView(logView); root.addView(sc,new LinearLayout.LayoutParams(-1,0,1)); setContentView(root);
-        report = new File(getExternalFilesDir(null),"GolfCanDiagnostic-v0.9-report.txt");
+        report = new File(getExternalFilesDir(null),"GolfCanLiveDecoder-v1.0-report.txt");
         String saved=getPreferences(0).getString("usb_tree",null); if(saved!=null){usbTree=Uri.parse(saved);}
-        log("Старт v0.9. Повна безпечна перевірка CAN-інтерфейсів; ніяких CAN-команд.");
+        log("Старт v1.0. Live Decoder. Немає CAN TX; callback тільки за підтвердженням.");
         log("Папка копій: " + getExternalFilesDir(null));
     }
     private LinearLayout buttonRow(LinearLayout root){
         LinearLayout r=new LinearLayout(this);r.setOrientation(LinearLayout.HORIZONTAL);root.addView(r,new LinearLayout.LayoutParams(-1,-2));return r;
     }
     private void addSmallButton(LinearLayout row,String text,View.OnClickListener listener){
-        Button b=new Button(this);b.setText(text);b.setTextSize(11);b.setAllCaps(false);b.setMinHeight(0);b.setMinimumHeight(0);b.setPadding(2,0,2,0);
-        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,48,1);lp.setMargins(2,2,2,2);row.addView(b,lp);b.setOnClickListener(listener);
+        Button b=new Button(this);b.setText(text);b.setTextSize(10);b.setAllCaps(false);b.setMinHeight(0);b.setMinimumHeight(0);b.setPadding(2,0,2,0);
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,44,1);lp.setMargins(2,2,2,2);row.addView(b,lp);b.setOnClickListener(listener);
     }
     private void confirmCallback(){
         new AlertDialog.Builder(this).setTitle("CAN Callback — експеримент")
-          .setMessage("Реєстрація callback у системному canbus_service може тимчасово вплинути на штатну CAN-програму. Тільки на припаркованому авто. Тест 30 секунд, потім відписка. Не натискати під час руху. Продовжити?")
+          .setMessage("CAN callback може вплинути на штатну CAN-програму. Лише на припаркованому авто, 60 секунд, автоматична відписка. Не використовувати під час руху. Продовжити?")
           .setNegativeButton("Скасувати",null)
-          .setPositiveButton("Запустити 30 с",(d,w)->new Thread(new Runnable(){public void run(){startCallback();}}).start()).show();
+          .setPositiveButton("Запустити 60 с",(d,w)->new Thread(new Runnable(){public void run(){startCallback();}}).start()).show();
     }
     private int transactionCode(Class<?> stub,String fieldName) throws Exception {
         java.lang.reflect.Field f=stub.getDeclaredField(fieldName);f.setAccessible(true);return f.getInt(null);
     }
     private void startCallback(){
-        synchronized(lock){if(callbackActive){log("CALLBACK already running");return;}callbackActive=true;callbackEvents=0;}
-        log("=== CAN CALLBACK: проба реєстрації (30 с) ===");
+        synchronized(lock){if(callbackActive){log("CALLBACK already running");return;}callbackActive=true;callbackEvents=0;parsedFrames=0;badChecksums=0;registerSucceeded=false;previous.clear();}
+        log("=== CAN LIVE: реєстрація (60 с) ===");
         try{
             Class<?> sm=Class.forName("android.os.ServiceManager");
             Method get=sm.getDeclaredMethod("getService",String.class);
@@ -109,8 +121,14 @@ public class MainActivity extends Activity {
                     if(code==callbackCode){
                         data.enforceInterface("android.os.ICanbusInterface");
                         byte[] bytes=data.createByteArray();int type=data.readInt();
-                        int n=++callbackEvents;
-                        if(callbackActive && n<=150){log("CAN_RX #"+n+" type="+type+" len="+(bytes==null?-1:bytes.length)+" HEX="+hex(bytes,96));}
+                        if(callbackActive){
+                            int n=++callbackEvents;
+                            if(n<=2500){
+                                int usable=(bytes==null?0:Math.min(Math.max(type,0),bytes.length));
+                                log("CAN_RX #"+n+" PHASE="+phase+" type="+type+" buffer="+(bytes==null?-1:bytes.length)+" payload="+usable+" HEX="+hex(bytes,usable));
+                                decodeFrames(bytes,usable,n);
+                            } else if(n==2501){log("CAN_RX LIMIT 2500: наступні пакети не записуються");}
+                        }
                         if(reply!=null)reply.writeNoException();return true;
                     }
                     return super.onTransact(code,data,reply,flags);
@@ -125,8 +143,8 @@ public class MainActivity extends Activity {
                 log("REGISTER transact result="+ok);
                 if(!ok)throw new IOException("REGISTER transact повернув false");
                 reply.readException();
-                log("REGISTER OK — очікуємо onResult(byte[],int) до 30 секунд");
-                mainHandler.postDelayed(autoStop,30000);
+                registerSucceeded=true;log("REGISTER OK — очікуємо onResult(byte[],int) до 60 секунд");
+                mainHandler.postDelayed(autoStop,60000);
             }finally{data.recycle();reply.recycle();}
         }catch(Throwable e){log("CALLBACK ERROR "+describe(e));stopCallback();}
     }
@@ -144,8 +162,39 @@ public class MainActivity extends Activity {
                     if(ok)reply.readException();log("UNREGISTER result="+ok);
                 }finally{data.recycle();reply.recycle();}}
             }catch(Throwable e){log("UNREGISTER ERROR "+describe(e));}
-            log("CAN CALLBACK STOP. Подій="+callbackEvents);
+            log("CAN CALLBACK STOP. Подій="+callbackEvents+" frames="+parsedFrames+" badChecksums="+badChecksums);
         }}).start();
+    }
+    private void mark(String name){
+        phase=name;
+        log("=== MARK "+name+" === events="+callbackEvents+" frames="+parsedFrames);
+    }
+    private void decodeFrames(byte[] bytes,int len,int event){
+        if(bytes==null || len<4)return;
+        int offset=0;
+        while(offset<len){
+            if((bytes[offset]&255)!=0x2E){offset++;continue;}
+            if(offset+3>len)break;
+            int payload=bytes[offset+2]&255;
+            int frameLen=payload+4;
+            if(frameLen<4 || frameLen>64 || offset+frameLen>len){
+                log("FRAME_PARTIAL event="+event+" offset="+offset+" payload="+payload);offset++;continue;
+            }
+            int sum=0;for(int i=offset;i<offset+frameLen;i++)sum=(sum+(bytes[i]&255))&255;
+            // Raise 2E framing observed: 2E CMD LEN PAYLOAD... CHECKSUM, checksum makes byte sum == 0x2D.
+            boolean valid=(sum==0x2D);
+            if(!valid)badChecksums++;
+            parsedFrames++;
+            String key=String.format(Locale.US,"%02X",bytes[offset+1]&255);
+            String data=hexRange(bytes,offset,frameLen);
+            String prev=previous.put(key,data);
+            boolean changed=prev==null||!prev.equals(data);
+            log("FRAME #"+parsedFrames+" phase="+phase+" cmd="+key+" payload="+payload+" sum="+String.format(Locale.US,"%02X",sum)+" check="+(valid?"OK":"UNKNOWN")+" changed="+changed+" HEX="+data);
+            offset+=frameLen;
+        }
+    }
+    private String hexRange(byte[] bytes,int start,int len){
+        StringBuilder sb=new StringBuilder();for(int i=start;i<start+len;i++){if(i>start)sb.append(' ');sb.append(String.format(Locale.US,"%02X",bytes[i]&255));}return sb.toString();
     }
     private void runAll(){
         log("========== ПОВНА ДІАГНОСТИКА v0.9 ==========");
