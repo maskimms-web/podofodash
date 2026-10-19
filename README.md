@@ -1,15 +1,20 @@
-# Golf CAN Door Monitor v1.2 — Podofo 8227L / Golf 5
+# Golf CAN Door Monitor v1.2.2 — Golf 5 / Podofo 8227L
 
-Source project ZIP for GitHub Actions; APK is not included. Android 8.1, 1024×600.
+GitHub Actions source project (not a prebuilt APK). Android 8.1, 1024×600.
 
 ## Build
-Upload extracted files into GitHub repository. Actions → Build Golf CAN Door Monitor v1.2 → Run workflow. Download `GolfCanDoorMonitor-v1.2-APK` and install `app-debug.apk`.
+Upload all extracted project files to your GitHub repository, then Actions → Build Golf CAN Door Monitor v1.2.2 → Run workflow. Download `GolfCanDoorMonitor-v1.2.2-APK` and install `app-debug.apk`.
 
-## Parked test
-1. Select USB folder, start 90s callback with confirmation.
-2. With ignition ON (engine not needed), close all doors; wait for indicator, then open driver's door; wait; close it; wait. Repeat twice. Leave 5-10s between actions.
-3. If desired, test ignition OFF, but door indicator may show UNKNOWN when ignition is off.
-4. Stop, export USB report `GolfCanDoorMonitor-v1.2-report.txt`.
+## What changed
+- Corrected inverted OPEN/CLOSED interpretation reported in the vehicle test: `41 01 A0`/`24 xx 00` now mean CLOSED, `41 01 A1`/`24 xx 01` mean OPEN.
+- Door decoder accepts 41 values `80/81/A0/A1`, and 24 values `00/02/04/06` in the first payload byte; requires both channels to agree and be recent (12 seconds).
+- Main door indicator and OPEN/CLOSED evidence now derive from the exact same state. UNKNOWN when data disagree or expire.
+- Version and report file updated to v1.2.2.
 
-## Experimental rules
-DOOR OPEN only if `41 01 A0` and `24 02 00` agree within 12s; DOOR CLOSED only if `41 01 A1` and `24 02 01` agree. Other packets or missing/stale signals => UNKNOWN. This is not proven vehicle-wide door state. These codes are correlations from prior logs and may represent another status. Ignition ON/OFF also uses two tentative matching signals. No CAN TX; callback registration can affect OEM service, so do not run while driving. Automatic unregister after 90 seconds, manual STOP. Includes streaming frame reassembly, 12-second marker lockout. Runtime untested.
+## Test (parked only)
+1. Select USB folder, start 90-second receive with confirmation.
+2. Ignition ON, all doors closed: wait for GREEN CLOSED. Open driver's door: wait for RED OPEN. Close: GREEN CLOSED. Repeat twice, wait up to 12 seconds between changes.
+3. Check whether both small labels `41` and `24` agree. If the large tile stays UNKNOWN, record what the small labels show.
+4. Export `GolfCanDoorMonitor-v1.2.2-report.txt` to USB and send the report.
+
+This is an experimental CAN decoder, not yet verified across all doors and ignition states. No CAN TX. Callback registration may interfere with the stock CAN service. Do not use while driving; automatic stop at 90 seconds, manual STOP available.

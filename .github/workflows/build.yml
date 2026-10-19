@@ -1,4 +1,4 @@
-name: Build Golf CAN Door Monitor v1.2
+name: Build Golf CAN Door Monitor v1.2.2
 on:
   workflow_dispatch:
   push:
@@ -21,5 +21,5 @@ jobs:
       - run: gradle --no-daemon :app:assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: GolfCanDoorMonitor-v1.2-APK
+          name: GolfCanDoorMonitor-v1.2.2-APK
           path: app/build/outputs/apk/debug/app-debug.apk

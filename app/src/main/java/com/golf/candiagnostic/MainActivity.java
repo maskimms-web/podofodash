@@ -74,7 +74,7 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle b) {
         super.onCreate(b);
         LinearLayout root = new LinearLayout(this); root.setOrientation(1); root.setPadding(10,7,10,7); root.setBackgroundColor(Color.rgb(14,21,30));
-        TextView title = new TextView(this); title.setText("GOLF CAN v1.2  |  LIVE DOOR TEST"); title.setTextColor(Color.WHITE); title.setTextSize(18); root.addView(title);
+        TextView title = new TextView(this); title.setText("GOLF CAN v1.2.2  |  LIVE DOOR TEST"); title.setTextColor(Color.WHITE); title.setTextSize(18); root.addView(title);
         TextView sub = new TextView(this); sub.setText("8227L • SDK " + Build.VERSION.SDK_INT + " • 90 с автостоп • без CAN TX"); sub.setTextColor(Color.LTGRAY); sub.setTextSize(12); root.addView(sub);
         LinearLayout indicators=new LinearLayout(this);indicators.setOrientation(LinearLayout.HORIZONTAL);
         root.addView(indicators,new LinearLayout.LayoutParams(-1,104));
@@ -99,10 +99,10 @@ public class MainActivity extends Activity {
         addSmallButton(line3,"ПІДСУМОК",new View.OnClickListener(){public void onClick(View v){showSummary();}});
         logView = new TextView(this); logView.setTextColor(Color.rgb(196,236,208)); logView.setTextSize(11); logView.setPadding(8,6,8,6);
         ScrollView sc = new ScrollView(this); sc.setFillViewport(false); sc.addView(logView); root.addView(sc,new LinearLayout.LayoutParams(-1,0,1)); setContentView(root);
-        report = new File(getExternalFilesDir(null),"GolfCanDoorMonitor-v1.2-report.txt");
+        report = new File(getExternalFilesDir(null),"GolfCanDoorMonitor-v1.2.2-report.txt");
         String saved=getPreferences(0).getString("usb_tree",null); if(saved!=null){usbTree=Uri.parse(saved);}
         mainHandler.post(refreshSignals);
-        log("Старт v1.2. Live Door Test. Немає CAN TX; callback тільки за підтвердженням.");
+        log("Старт v1.2.2. Live Door Test. Немає CAN TX; callback тільки за підтвердженням.");
         log("Папка копій: " + getExternalFilesDir(null));
     }
     private TextView indicator(LinearLayout row,String initial,int background){
@@ -288,7 +288,7 @@ public class MainActivity extends Activity {
         if(cmd==0x41 && len==2){
             int a=b[pos+3]&255, v=b[pos+4]&255;
             if(a==1){
-                if(v==0xA0||v==0xA1){door41=(v==0xA0?1:0);door41At=now;}
+                if(v==0x80||v==0x81||v==0xA0||v==0xA1){door41=(v&1);door41At=now;}
                 else {door41=-1;door41At=0;}
                 if(v==0x80||v==0x81) {ignition41=0;ignition41At=now;}
                 else if(v==0xA0||v==0xA1) {ignition41=1;ignition41At=now;}
@@ -296,8 +296,10 @@ public class MainActivity extends Activity {
         }
         if(cmd==0x24 && len==2){
             int a=b[pos+3]&255,v=b[pos+4]&255;
-            if(a==2 && (v==0||v==1)){door24=(v==0?1:0);door24At=now;ignition24=1;ignition24At=now;}
-            else if(a==0){door24=-1;door24At=0;ignition24=0;ignition24At=now;}
+            if((a==0||a==2||a==4||a==6) && (v==0||v==1)){
+                door24=v;door24At=now;
+                if(a==0||a==2){ignition24=(a==2?1:0);ignition24At=now;}
+            }
         }
         mainHandler.post(new Runnable(){public void run(){updateSignalDisplay();}});
     }
@@ -321,8 +323,8 @@ public class MainActivity extends Activity {
         doorView.setBackgroundColor("ВІДКРИТІ".equals(door)?Color.rgb(155,45,45):"ЗАКРИТІ".equals(door)?Color.rgb(28,115,68):Color.rgb(65,75,88));
         ignitionView.setText("ЗАПАЛЮВАННЯ\n"+ign);
         ignitionView.setBackgroundColor("ON".equals(ign)?Color.rgb(27,100,140):Color.rgb(65,75,88));
-        evidenceView.setText("41: "+(a?(door41==1?"OPEN":"CLOSED"):"—")+"   24: "+(b?(door24==1?"OPEN":"CLOSED"):"—")+"   |  обидва сигнали потрібні");
-        if(!door.equals(shownDoor)){log("DOOR_INDICATOR "+shownDoor+" -> "+door+" (41="+(a?door41:-1)+",24="+(b?door24:-1)+")");shownDoor=door;}
+        evidenceView.setText("41: "+(a?(door41==1?"OPEN":"CLOSED"):"—")+"   24: "+(b?(door24==1?"OPEN":"CLOSED"):"—")+"   |  результат: "+(door.equals("ВІДКРИТІ")?"OPEN":door.equals("ЗАКРИТІ")?"CLOSED":"UNKNOWN")+" (2 сигнали)");
+        if(!door.equals(shownDoor)){log("DOOR_INDICATOR "+shownDoor+" -> "+door+" (41="+(a?door41:-1)+",24="+(b?door24:-1)+", agree="+(a&&b&&door41==door24)+")");shownDoor=door;}
         if(!ign.equals(shownIgnition)){log("IGNITION_INDICATOR "+shownIgnition+" -> "+ign);shownIgnition=ign;}
     }
     private String hexRange(byte[] bytes,int start,int len){
