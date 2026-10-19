@@ -325,7 +325,6 @@ public class MainActivity extends Activity {
         if(!door.equals(shownDoor)){log("DOOR_INDICATOR "+shownDoor+" -> "+door+" (41="+(a?door41:-1)+",24="+(b?door24:-1)+")");shownDoor=door;}
         if(!ign.equals(shownIgnition)){log("IGNITION_INDICATOR "+shownIgnition+" -> "+ign);shownIgnition=ign;}
     }
-    @Override protected void onDestroy(){mainHandler.removeCallbacks(refreshSignals);stopCallback();super.onDestroy();}
     private String hexRange(byte[] bytes,int start,int len){
         StringBuilder sb=new StringBuilder();for(int i=start;i<start+len;i++){if(i>start)sb.append(' ');sb.append(String.format(Locale.US,"%02X",bytes[i]&255));}return sb.toString();
     }
@@ -459,7 +458,7 @@ public class MainActivity extends Activity {
         catch(Exception e){receiver=null;log("ПОМИЛКА приймача: "+e);}
     }
     private void stopListening(){if(receiver!=null){try{unregisterReceiver(receiver);}catch(Exception ignored){}receiver=null;log("Прослуховування зупинено. Подій: "+eventCount);}}
-    @Override protected void onDestroy(){stopCallback();stopListening();super.onDestroy();}
+    @Override protected void onDestroy(){mainHandler.removeCallbacks(refreshSignals);stopCallback();stopListening();super.onDestroy();}
     private void addButton(LinearLayout root,String text,View.OnClickListener click){Button b=new Button(this);b.setText(text);root.addView(b,new LinearLayout.LayoutParams(-1,-2));b.setOnClickListener(click);}
     private void log(String s){final String line="["+new SimpleDateFormat("HH:mm:ss",Locale.US).format(new Date())+"] "+s+"\n";synchronized(lock){logs.append(line); if(report!=null){try(FileOutputStream f=new FileOutputStream(report,true)){f.write(line.getBytes("UTF-8"));}catch(Exception ignored){}}}runOnUiThread(new Runnable(){public void run(){if(logView!=null){logView.append(line);}}});}
     private void inspect(boolean copy){
