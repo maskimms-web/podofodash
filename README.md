@@ -1,19 +1,20 @@
-# Golf CAN Diagnostic v0.8 — comprehensive read-only inspection
+# Golf CAN Diagnostic v0.9 — Binder Callback
 
-Target: Android 8.1 / SDK 27, MTK 8227L, Raise-PQ VW CANBOX.
+Android SDK 27, Podofo / 8227L, CAN Pro Raise-PQ. GitHub Actions builds APK.
 
-## Build
-Upload all files to a GitHub repository. Actions → Build Golf CAN Diagnostic v0.8 → Run workflow. Download artifact GolfCanDiagnostic-v0.8-APK; install `app-debug.apk`.
+## Screen 1024×600
+Two compact rows of three buttons, large scrollable log area.
 
-## One-pass check
-1. Park the car; turn on the head unit. No need to start engine or drive.
-2. Launch the app and tap **ОДНА ПОВНА ПЕРЕВІРКА (БЕЗПЕЧНА)**. Wait for **КІНЕЦЬ** in log (typically seconds).
-3. Insert USB drive. Tap **1. ВИБРАТИ ПАПКУ USB** and select USB root.
-4. Tap **2. ЗБЕРЕГТИ ЗВІТ І APK НА USB**. Wait for save confirmation.
-5. Send `GolfCanDiagnostic-v0.8-report.txt` back for analysis.
+## How to test (vehicle parked)
+1. Build via Actions → Build Golf CAN Diagnostic v0.9 → Run workflow; download artifact `GolfCanDiagnostic-v0.9-APK`.
+2. Install `app-debug.apk` on the head unit.
+3. Press `1 ПОВНА ПЕРЕВІРКА` (metadata only) and wait for `КІНЕЦЬ`.
+4. With vehicle stationary, press `2 CAN CALLBACK`, read warning, confirm. Observe 30 seconds. The app attempts registration of `ICanbusInterface.onResult(byte[],int)` and automatically attempts unregister after 30 seconds.
+5. Press `СТОП` if anything unusual occurs. If CAN functions are disrupted, stop test and restart the head unit.
+6. Press `USB: ВИБРАТИ`, select flash drive, then `USB: ЗБЕРЕГТИ`; send `GolfCanDiagnostic-v0.9-report.txt`.
 
-Do not press **ВИТЯГНУТИ CANBUS APK** unless you need a new copy (large 59 MB file). Broadcast listening is optional; v0.6 already found none. The full check does not read live CAN frames; it detects system Binder names/descriptors (if permitted), installed AIDL Java classes, package services/providers/receivers/permissions, SocketCAN kernel exposure, and UART device node metadata. It does not open serial devices, send CAN commands, bind to vendor services, call Binder transact, or require root.
+## Caution
+`setCanbusInterface` is a system Binder registration operation. It may replace or interfere with a stock callback; this is **not** proven safe on this firmware. Do not run while driving. Registration may fail due to permissions. No `setValue`, `setBCS`, CAN transmission or UART access is attempted. Registration and removal are Binder transact calls. No root.
 
-The `VwRaiseCanbox` project documents a VW Raise 38400 8N1 UART protocol; that is an external reference, not proof that the UART can be opened by an unprivileged APK. The AC8227L-Root-Features repository mentions `canbus_service`/`android.os.ICanbusService` on a different unit and firmware version. This app tests metadata rather than assuming equivalence.
-
-Caution: on Android 8.1, hidden `ServiceManager` APIs can be restricted. A failed reflection call means the inspection path is blocked, not that the CANBUS service does not exist.
+## Implementation
+Uses the actual `TRANSACTION_setCanbusInterface`, `TRANSACTION_removeCanbusInterface` and `TRANSACTION_onResult` constants reflected from device framework rather than hardcoded transaction numbers. Logs callback payloads in HEX (up to 96 bytes, first 150 messages).

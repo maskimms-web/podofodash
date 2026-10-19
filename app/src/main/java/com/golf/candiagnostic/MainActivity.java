@@ -17,6 +17,11 @@ import android.content.SharedPreferences;
 import android.content.Context;
 import android.content.BroadcastReceiver;
 import android.os.IBinder;
+import android.os.Binder;
+import android.os.Parcel;
+import android.os.Handler;
+import android.os.Looper;
+import android.app.AlertDialog;
 import android.content.pm.ServiceInfo;
 import android.content.pm.ResolveInfo;
 import java.lang.reflect.Method;
@@ -37,32 +42,114 @@ public class MainActivity extends Activity {
     private File report;
     private BroadcastReceiver receiver;
     private int eventCount=0;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private volatile boolean callbackActive = false;
+    private volatile int callbackEvents = 0;
+    private IBinder remoteCanbus;
+    private Binder callbackBinder;
+    private int unregisterCode = -1;
+    private final Runnable autoStop = new Runnable(){public void run(){stopCallback();}};
+
 
     @Override public void onCreate(Bundle b) {
         super.onCreate(b);
-        LinearLayout root = new LinearLayout(this); root.setOrientation(1); root.setPadding(18,14,18,12); root.setBackgroundColor(Color.rgb(14,21,30));
-        TextView title = new TextView(this); title.setText("GOLF CAN DIAGNOSTIC v0.8"); title.setTextColor(Color.WHITE); title.setTextSize(22); root.addView(title);
-        TextView sub = new TextView(this); sub.setText("Без root • тільки читання APK • Android SDK " + Build.VERSION.SDK_INT); sub.setTextColor(Color.LTGRAY); root.addView(sub);
-        addButton(root,"ОДНА ПОВНА ПЕРЕВІРКА (БЕЗПЕЧНА)",new View.OnClickListener(){public void onClick(View v){new Thread(new Runnable(){public void run(){runAll();}}).start();}});
-        addButton(root,"ПЕРЕВІРИТИ BINDER І СЕРВІСИ",new View.OnClickListener(){public void onClick(View v){new Thread(new Runnable(){public void run(){inspectBinder();}}).start();}});
-        addButton(root,"СЛУХАТИ CAN ПОДІЇ",new View.OnClickListener(){public void onClick(View v){startListening();}});
-        addButton(root,"ЗУПИНИТИ СЛУХАННЯ",new View.OnClickListener(){public void onClick(View v){stopListening();}});
-        addButton(root,"ПОЗНАЧКА: ДВЕРІ ВІДКРИТО",new View.OnClickListener(){public void onClick(View v){log("РУЧНА ПОЗНАЧКА: двері відкрито (НЕ CAN-подія)");}});
-        addButton(root,"ПОЗНАЧКА: ДВЕРІ ЗАКРИТО",new View.OnClickListener(){public void onClick(View v){log("РУЧНА ПОЗНАЧКА: двері закрито (НЕ CAN-подія)");}});
-        addButton(root,"ЗНАЙТИ ШЛЯХИ APK", new View.OnClickListener(){public void onClick(View v){ new Thread(new Runnable(){public void run(){inspect(false);}}).start();}});
-        addButton(root,"ВИТЯГНУТИ CANBUS APK",new View.OnClickListener(){public void onClick(View v){new Thread(new Runnable(){public void run(){inspect(true);}}).start();}});
-        addButton(root,"1. ВИБРАТИ ПАПКУ USB",new View.OnClickListener(){public void onClick(View v){chooseUsb();}});
-        addButton(root,"2. ЗБЕРЕГТИ ЗВІТ І APK НА USB",new View.OnClickListener(){public void onClick(View v){new Thread(new Runnable(){public void run(){saveToUsb();}}).start();}});
-        logView = new TextView(this); logView.setTextColor(Color.rgb(196,236,208)); logView.setTextSize(13); logView.setPadding(6,8,6,8); logView.setMovementMethod(new ScrollingMovementMethod());
-        ScrollView sc = new ScrollView(this); sc.addView(logView); root.addView(sc,new LinearLayout.LayoutParams(-1,0,1)); setContentView(root);
-        report = new File(getExternalFilesDir(null),"GolfCanDiagnostic-v0.8-report.txt");
+        LinearLayout root = new LinearLayout(this); root.setOrientation(1); root.setPadding(10,7,10,7); root.setBackgroundColor(Color.rgb(14,21,30));
+        TextView title = new TextView(this); title.setText("GOLF CAN v0.9  |  BINDER CALLBACK"); title.setTextColor(Color.WHITE); title.setTextSize(18); root.addView(title);
+        TextView sub = new TextView(this); sub.setText("8227L • SDK " + Build.VERSION.SDK_INT + " • 30 с автостоп • без CAN TX"); sub.setTextColor(Color.LTGRAY); sub.setTextSize(12); root.addView(sub);
+        LinearLayout line1 = buttonRow(root);
+        addSmallButton(line1,"1  ПОВНА ПЕРЕВІРКА",new View.OnClickListener(){public void onClick(View v){new Thread(new Runnable(){public void run(){runAll();}}).start();}});
+        addSmallButton(line1,"2  CAN CALLBACK",new View.OnClickListener(){public void onClick(View v){confirmCallback();}});
+        addSmallButton(line1,"СТОП",new View.OnClickListener(){public void onClick(View v){stopCallback();stopListening();}});
+        LinearLayout line2 = buttonRow(root);
+        addSmallButton(line2,"USB: ВИБРАТИ",new View.OnClickListener(){public void onClick(View v){chooseUsb();}});
+        addSmallButton(line2,"USB: ЗБЕРЕГТИ",new View.OnClickListener(){public void onClick(View v){new Thread(new Runnable(){public void run(){saveToUsb();}}).start();}});
+        addSmallButton(line2,"BROADCAST",new View.OnClickListener(){public void onClick(View v){startListening();}});
+        logView = new TextView(this); logView.setTextColor(Color.rgb(196,236,208)); logView.setTextSize(12); logView.setPadding(8,6,8,6);
+        ScrollView sc = new ScrollView(this); sc.setFillViewport(false); sc.addView(logView); root.addView(sc,new LinearLayout.LayoutParams(-1,0,1)); setContentView(root);
+        report = new File(getExternalFilesDir(null),"GolfCanDiagnostic-v0.9-report.txt");
         String saved=getPreferences(0).getString("usb_tree",null); if(saved!=null){usbTree=Uri.parse(saved);}
-        log("Старт v0.8. Повна безпечна перевірка CAN-інтерфейсів; ніяких CAN-команд.");
+        log("Старт v0.9. Повна безпечна перевірка CAN-інтерфейсів; ніяких CAN-команд.");
         log("Папка копій: " + getExternalFilesDir(null));
     }
+    private LinearLayout buttonRow(LinearLayout root){
+        LinearLayout r=new LinearLayout(this);r.setOrientation(LinearLayout.HORIZONTAL);root.addView(r,new LinearLayout.LayoutParams(-1,-2));return r;
+    }
+    private void addSmallButton(LinearLayout row,String text,View.OnClickListener listener){
+        Button b=new Button(this);b.setText(text);b.setTextSize(11);b.setAllCaps(false);b.setMinHeight(0);b.setMinimumHeight(0);b.setPadding(2,0,2,0);
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,48,1);lp.setMargins(2,2,2,2);row.addView(b,lp);b.setOnClickListener(listener);
+    }
+    private void confirmCallback(){
+        new AlertDialog.Builder(this).setTitle("CAN Callback — експеримент")
+          .setMessage("Реєстрація callback у системному canbus_service може тимчасово вплинути на штатну CAN-програму. Тільки на припаркованому авто. Тест 30 секунд, потім відписка. Не натискати під час руху. Продовжити?")
+          .setNegativeButton("Скасувати",null)
+          .setPositiveButton("Запустити 30 с",(d,w)->new Thread(new Runnable(){public void run(){startCallback();}}).start()).show();
+    }
+    private int transactionCode(Class<?> stub,String fieldName) throws Exception {
+        java.lang.reflect.Field f=stub.getDeclaredField(fieldName);f.setAccessible(true);return f.getInt(null);
+    }
+    private void startCallback(){
+        synchronized(lock){if(callbackActive){log("CALLBACK already running");return;}callbackActive=true;callbackEvents=0;}
+        log("=== CAN CALLBACK: проба реєстрації (30 с) ===");
+        try{
+            Class<?> sm=Class.forName("android.os.ServiceManager");
+            Method get=sm.getDeclaredMethod("getService",String.class);
+            IBinder remote=(IBinder)get.invoke(null,"canbus_service");
+            if(remote==null)throw new IOException("canbus_service відсутній");
+            String descriptor=remote.getInterfaceDescriptor();
+            if(!"android.os.ICanbusService".equals(descriptor))throw new SecurityException("Неочікуваний дескриптор: "+descriptor);
+            Class<?> stub=Class.forName("android.os.ICanbusService$Stub");
+            int reg=transactionCode(stub,"TRANSACTION_setCanbusInterface");
+            int unreg=transactionCode(stub,"TRANSACTION_removeCanbusInterface");
+            log("CAN SERVICE descriptor="+descriptor+" registerCode="+reg+" unregisterCode="+unreg);
+            final int callbackCode=transactionCode(Class.forName("android.os.ICanbusInterface$Stub"),"TRANSACTION_onResult");
+            log("CALLBACK transactionCode="+callbackCode);
+            final Binder local=new Binder(){
+                @Override protected boolean onTransact(int code,Parcel data,Parcel reply,int flags) throws android.os.RemoteException {
+                    if(code==IBinder.INTERFACE_TRANSACTION){if(reply!=null)reply.writeString("android.os.ICanbusInterface");return true;}
+                    if(code==callbackCode){
+                        data.enforceInterface("android.os.ICanbusInterface");
+                        byte[] bytes=data.createByteArray();int type=data.readInt();
+                        int n=++callbackEvents;
+                        if(callbackActive && n<=150){log("CAN_RX #"+n+" type="+type+" len="+(bytes==null?-1:bytes.length)+" HEX="+hex(bytes,96));}
+                        if(reply!=null)reply.writeNoException();return true;
+                    }
+                    return super.onTransact(code,data,reply,flags);
+                }
+            };
+            local.attachInterface(null,"android.os.ICanbusInterface");
+            synchronized(lock){remoteCanbus=remote;callbackBinder=local;unregisterCode=unreg;}
+            Parcel data=Parcel.obtain(),reply=Parcel.obtain();
+            try{
+                data.writeInterfaceToken(descriptor);data.writeStrongBinder(local);
+                boolean ok=remote.transact(reg,data,reply,0);
+                log("REGISTER transact result="+ok);
+                if(!ok)throw new IOException("REGISTER transact повернув false");
+                reply.readException();
+                log("REGISTER OK — очікуємо onResult(byte[],int) до 30 секунд");
+                mainHandler.postDelayed(autoStop,30000);
+            }finally{data.recycle();reply.recycle();}
+        }catch(Throwable e){log("CALLBACK ERROR "+describe(e));stopCallback();}
+    }
+    private String hex(byte[] bytes,int limit){if(bytes==null)return "null";StringBuilder sb=new StringBuilder();for(int i=0;i<Math.min(bytes.length,limit);i++){if(i>0)sb.append(' ');sb.append(String.format(Locale.US,"%02X",bytes[i]&255));}if(bytes.length>limit)sb.append(" ...");return sb.toString();}
+    private void stopCallback(){
+        mainHandler.removeCallbacks(autoStop);
+        final IBinder remote;final Binder local;final int unreg;
+        synchronized(lock){remote=remoteCanbus;local=callbackBinder;unreg=unregisterCode;remoteCanbus=null;callbackBinder=null;unregisterCode=-1;callbackActive=false;}
+        if(local==null){log("CALLBACK не активний. Отримано="+callbackEvents);return;}
+        new Thread(new Runnable(){public void run(){
+            try{
+                if(remote!=null && unreg>=0){Parcel data=Parcel.obtain(),reply=Parcel.obtain();try{
+                    data.writeInterfaceToken("android.os.ICanbusService");data.writeStrongBinder(local);
+                    boolean ok=remote.transact(unreg,data,reply,0);
+                    if(ok)reply.readException();log("UNREGISTER result="+ok);
+                }finally{data.recycle();reply.recycle();}}
+            }catch(Throwable e){log("UNREGISTER ERROR "+describe(e));}
+            log("CAN CALLBACK STOP. Подій="+callbackEvents);
+        }}).start();
+    }
     private void runAll(){
-        log("========== ПОВНА ДІАГНОСТИКА v0.8 ==========");
-        log("Тільки читання. Немає root, bindService, transact, відкриття UART, CAN-передачі чи зміни налаштувань.");
+        log("========== ПОВНА ДІАГНОСТИКА v0.9 ==========");
+        log("Перевірка метаданих без CAN-команд. Callback запускається лише окремо за підтвердженням.");
         log("DEVICE="+Build.MANUFACTURER+" / "+Build.MODEL+" / "+Build.DISPLAY+" SDK="+Build.VERSION.SDK_INT);
         inspectBinder();
         inspectPackages();
@@ -120,7 +207,7 @@ public class MainActivity extends Activity {
         catch(Throwable e){log("FILE_ERROR "+path+" "+describe(e));}
     }
     private void inspectBinder(){
-        log("=== v0.8: ТІЛЬКИ ЧИТАННЯ МЕТАДАНИХ СИСТЕМНИХ СЕРВІСІВ ===");
+        log("=== v0.9: ТІЛЬКИ ЧИТАННЯ МЕТАДАНИХ СИСТЕМНИХ СЕРВІСІВ ===");
         log("SDK="+Build.VERSION.SDK_INT+"; ніяких CAN команд, bindService чи transact");
         try {
             Class<?> sm=Class.forName("android.os.ServiceManager");
@@ -190,9 +277,9 @@ public class MainActivity extends Activity {
         catch(Exception e){receiver=null;log("ПОМИЛКА приймача: "+e);}
     }
     private void stopListening(){if(receiver!=null){try{unregisterReceiver(receiver);}catch(Exception ignored){}receiver=null;log("Прослуховування зупинено. Подій: "+eventCount);}}
-    @Override protected void onDestroy(){stopListening();super.onDestroy();}
+    @Override protected void onDestroy(){stopCallback();stopListening();super.onDestroy();}
     private void addButton(LinearLayout root,String text,View.OnClickListener click){Button b=new Button(this);b.setText(text);root.addView(b,new LinearLayout.LayoutParams(-1,-2));b.setOnClickListener(click);}
-    private void log(String s){final String line="["+new SimpleDateFormat("HH:mm:ss",Locale.US).format(new Date())+"] "+s+"\n";synchronized(lock){logs.append(line); if(report!=null){try(FileOutputStream f=new FileOutputStream(report,true)){f.write(line.getBytes("UTF-8"));}catch(Exception ignored){}}}runOnUiThread(new Runnable(){public void run(){logView.append(line);}});}
+    private void log(String s){final String line="["+new SimpleDateFormat("HH:mm:ss",Locale.US).format(new Date())+"] "+s+"\n";synchronized(lock){logs.append(line); if(report!=null){try(FileOutputStream f=new FileOutputStream(report,true)){f.write(line.getBytes("UTF-8"));}catch(Exception ignored){}}}runOnUiThread(new Runnable(){public void run(){if(logView!=null){logView.append(line);}}});}
     private void inspect(boolean copy){
         for(String pkg:packages){
             log("--- " + pkg + " ---");

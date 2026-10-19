@@ -1,4 +1,4 @@
-name: Build Golf CAN Diagnostic v0.8
+name: Build Golf CAN Diagnostic v0.9
 on:
   workflow_dispatch:
   push:
@@ -21,5 +21,5 @@ jobs:
       - run: gradle --no-daemon :app:assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: GolfCanDiagnostic-v0.8-APK
+          name: GolfCanDiagnostic-v0.9-APK
           path: app/build/outputs/apk/debug/app-debug.apk
